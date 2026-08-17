@@ -1,0 +1,35 @@
+# ML Datasets (Ignore heavy CSVs and dataset contents)
+ML/dataSets/
+*.csv
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Compiled Files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Environment Variables & Secret Credentials
+.env
+.env.local
+
+# IDE & Editor Specific Files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+
+# Database & Log Files
+*.sqlite3
+*.log
