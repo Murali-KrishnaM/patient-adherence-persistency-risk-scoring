@@ -1,0 +1,21 @@
+[
+  "total_fills_early",
+  "avg_days_supply_early",
+  "avg_cost_burden_early",
+  "total_cost_burden_early",
+  "num_distinct_ndc_early",
+  "AGE",
+  "BENE_SEX_IDENT_CD",
+  "BENE_RACE_CD",
+  "SP_ALZHDMTA",
+  "SP_CHF",
+  "SP_CHRNKIDN",
+  "SP_CNCR",
+  "SP_COPD",
+  "SP_DEPRESSN",
+  "SP_DIABETES",
+  "SP_ISCHMCHT",
+  "SP_OSTEOPRS",
+  "SP_RA_OA",
+  "SP_STRKETIA"
+]
