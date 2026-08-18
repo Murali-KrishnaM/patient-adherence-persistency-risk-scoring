@@ -33,3 +33,9 @@ Thumbs.db
 # Database & Log Files
 *.sqlite3
 *.log
+
+# Frontend (Vite/React)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local

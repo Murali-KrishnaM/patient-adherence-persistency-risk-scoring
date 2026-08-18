@@ -2,7 +2,6 @@
 Flask API for the Patient Adherence & Persistency Risk Scoring demo.
 
 Run locally:
-    export PG_DATABASE=adherence_warehouse PG_USER=postgres PG_PASSWORD=postgres
     flask --app app run --debug --port 5000
 
 Endpoints (all JSON):
@@ -14,6 +13,9 @@ Endpoints (all JSON):
     POST /api/patient/<patient_id>/snooze
     POST /api/simulate-next-batch
 """
+from dotenv import load_dotenv
+load_dotenv()  # Added to ensure credentials are read if run directly
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -21,7 +23,19 @@ from db import query, query_one
 import etl
 
 app = Flask(__name__)
-CORS(app)  # React dev server runs on a different port
+
+
+# for staging/prod as needed). Avoid a bare CORS(app) since this API
+# returns PII on /api/patient/<id>.
+# Allow both Vite (5173) and standard React/Next.js (3000) origins
+CORS(
+    app,
+    resources={r"/api/*": {"origins": [
+        "http://localhost:5173", 
+        "http://localhost:3000"
+    ]}},
+    supports_credentials=True,
+)
 
 TIER_RANK_SQL = "CASE risk_tier WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END"
 

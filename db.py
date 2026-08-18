@@ -5,8 +5,11 @@ Reads connection settings from environment variables so nobody needs to
 hardcode credentials. Defaults match a typical local Postgres install.
 """
 import os
+from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
+
+load_dotenv()  # reads .env from the current working directory into os.environ
 
 DB_CONFIG = {
     "host": os.environ.get("PG_HOST", "localhost"),

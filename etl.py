@@ -64,7 +64,6 @@ FEATURES_SQL = f"""
     WHERE p.patient_id = ANY(%(ids)s)
 """
 
-
 def get_current_batch_number(conn) -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT current_batch_number FROM ops.sim_state WHERE id = 1")
@@ -135,6 +134,17 @@ def load_batch(batch_number: int) -> dict:
             colnames = [d[0] for d in cur.description]
             feat_rows = cur.fetchall()
         feat_df = pd.DataFrame(feat_rows, columns=colnames)
+
+        # ---- FIX: Force categorical strings to numeric types for XGBoost ----
+        cols_to_fix = [
+            'avg_days_supply_early', 
+            'avg_cost_burden_early', 
+            'total_cost_burden_early'
+        ]
+        for col in cols_to_fix:
+            if col in feat_df.columns:
+                feat_df[col] = pd.to_numeric(feat_df[col], errors='coerce')
+        # ---------------------------------------------------------------------
 
         model = get_model()
         probs = model.predict_proba(feat_df.drop(columns=["patient_id"]))
