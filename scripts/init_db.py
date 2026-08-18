@@ -12,6 +12,9 @@ and empty database already exist.
 Usage:
     python scripts/init_db.py
 """
+from dotenv import load_dotenv
+
+load_dotenv()  # Automatically loads variables from .env
 import sys
 from pathlib import Path
 
