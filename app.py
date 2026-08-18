@@ -66,7 +66,7 @@ def queue():
     tier = request.args.get("tier")  # optional filter: High / Medium / Low
     limit = int(request.args.get("limit", 50))
 
-    where = "ps.status = 'needs_contact'"
+    where = "ps.status IN ('needs_contact', 'snoozed')"
     params = []
     if tier:
         where += " AND rs.risk_tier = %s"
@@ -75,9 +75,13 @@ def queue():
     sql = f"""
         SELECT
             p.patient_id, p.age, p.sex_code, p.race_code,
+            p.sp_alzhdmta, p.sp_chf, p.sp_chrnkidn, p.sp_cncr, p.sp_copd,
+            p.sp_depressn, p.sp_diabetes, p.sp_ischmcht, p.sp_osteoprs,
+            p.sp_ra_oa, p.sp_strketia,
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3,
-            rs.computed_at
+            rs.computed_at,
+            ps.status
         FROM clinical.risk_scores rs
         JOIN clinical.dim_patient_clinical p ON p.patient_id = rs.patient_id
         JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id

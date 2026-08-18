@@ -67,20 +67,50 @@ export async function simulateNextBatch() {
   return handle(await fetch(`${API_BASE_URL}/api/simulate-next-batch`, { method: 'POST' }));
 }
 
-// Legacy shim: old code called this with (patientRecords, file) and got
-// back objects shaped like { patient_name, risk_score (0-100), contact_status, ... }.
-// This bridges to the real /api/queue endpoint but does NOT fully match
-// the old shape yet (no patient_name/contact_number/email from this route,
-// risk_score is derived from risk_probability). Component-level fixes still needed.
-export async function processPatientData() {
-  const rows = await getQueue({ limit: 100 });
-  const mapped = rows.map(r => ({
+// Maps the backend's real "status" values to the UI's display labels.
+// This is the single place that translation happens — components
+// should never invent their own fallback status strings.
+const STATUS_LABELS = {
+  needs_contact: 'Pending Contact',
+  contacted: 'Contacted',
+  snoozed: 'Snoozed',
+  case_closed: 'Closed',
+};
+
+// Single mapping function used for BOTH the queue list and the single-patient
+// detail response, so a patient's risk_tier/risk_score/status can never
+// disagree between the list view and the detail drawer — they're always
+// derived the exact same way from the exact same raw row shape.
+function mapPatientRow(r) {
+  return {
     ...r,
-    patient_name: r.patient_name || `Patient ${r.patient_id}`,
-    contact_number: r.contact_number || '(555) 019-2834',
-    email: r.email || `patient_${r.patient_id}@medcare-demo.com`,
+    patient_name: r.full_name || `Patient ${r.patient_id}`,
+    contact_number: r.phone_number || null,
+    email: r.email || null,
     risk_score: Math.round((r.risk_probability || 0) * 100),
-    contact_status: r.contact_status || 'Pending Contact',
-  }));
-  return { source: 'Flask Backend', data: mapped, success: true };
+    contact_status: STATUS_LABELS[r.status] || 'Pending Contact',
+  };
+}
+
+// Loads the current queue as-is. Use this for the initial page load and
+// for refreshing after a status-changing action — it does NOT advance
+// the simulated batch.
+export async function loadQueueData() {
+  const rows = await getQueue({ limit: 100 });
+  return rows.map(mapPatientRow);
+}
+
+// Advances the simulation to the next batch, then returns the refreshed
+// queue. Use this ONLY for the "New Analysis" button. Errors (e.g. "no
+// more batches available") are thrown, not swallowed, so the UI can tell
+// the user what actually happened instead of pretending it worked.
+export async function processPatientData() {
+  await simulateNextBatch();
+  const rows = await getQueue({ limit: 100 });
+  return { source: 'Flask Backend', data: rows.map(mapPatientRow), success: true };
+}
+
+export async function fetchPatientDetail(patientId) {
+  const row = await getPatientDetail(patientId);
+  return mapPatientRow(row);
 }

@@ -7,48 +7,78 @@ import PatientDetailModal from './components/PatientDetailModal';
 import FastApiConfigModal from './components/FastApiConfigModal';
 import EmailReminderModal from './components/EmailReminderModal';
 import SplashScreen from './components/SplashScreen';
-import { processPatientData, checkFastApiHealth } from './services/api';
-import { SAMPLE_PATIENTS } from './data/sampleDataset';
+import {
+  loadQueueData,
+  processPatientData,
+  fetchPatientDetail,
+  checkApiHealth,
+  markContacted,
+  markSnoozed,
+  markClosed,
+} from './services/api';
 import { CheckCircle2, ShieldCheck, RefreshCw, Activity } from 'lucide-react';
 
 export default function App() {
   const [patients, setPatients] = useState([]);
-  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [patientDetail, setPatientDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [actionInFlight, setActionInFlight] = useState(false);
   const [emailPatient, setEmailPatient] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState('patients'); // Default: 'patients' (Patient Risk Table)
+  const [activeTab, setActiveTab] = useState('patients');
   const [apiStatus, setApiStatus] = useState({ online: false });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [dataSourceInfo, setDataSourceInfo] = useState('');
   const [toastMessage, setToastMessage] = useState(null);
-  const [themeMode, setThemeMode] = useState('dark'); // Default: 'dark' | 'light'
+  const [themeMode, setThemeMode] = useState('dark');
   const [showSplash, setShowSplash] = useState(true);
 
-  // Initial Health Check & Automatic Datawarehouse Load on Mount
   useEffect(() => {
-    checkFastApiHealth().then(res => setApiStatus(res));
-    loadDatawarehouseData();
+    checkApiHealth().then(setApiStatus);
+    loadQueue();
   }, []);
 
-  const loadDatawarehouseData = async () => {
-    setIsProcessing(true);
-    const result = await processPatientData(SAMPLE_PATIENTS, null);
-    setPatients(result.data);
-    setDataSourceInfo('Datawarehouse Ingested');
-    setIsProcessing(false);
+  const triggerToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // New Analysis Handler - Keeps dashboard visible without turning back to input box
+  // Loads the queue as it currently stands in the database.
+  // Does NOT advance the simulated batch — safe to call any time
+  // (initial mount, after an action, etc).
+  const loadQueue = async () => {
+    setIsProcessing(true);
+    try {
+      const data = await loadQueueData();
+      setPatients(data);
+      setDataSourceInfo('Datawarehouse Synced');
+    } catch (err) {
+      triggerToast(`Failed to load queue: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // "New Analysis" — advances to the next simulated batch, then reloads.
+  // This is the only place that should ever call the simulate endpoint.
   const handleNewAnalysis = async () => {
     setIsProcessing(true);
-    const result = await processPatientData(SAMPLE_PATIENTS, null);
-    setPatients(result.data);
-    setDataSourceInfo('New Analysis Complete');
-    setIsProcessing(false);
-    triggerToast('New Analysis executed • Datawarehouse records updated');
+    try {
+      const result = await processPatientData();
+      setPatients(result.data);
+      setDataSourceInfo('New Analysis Complete');
+      triggerToast('New batch loaded — queue refreshed');
+    } catch (err) {
+      const msg = /no more batches/i.test(err.message)
+        ? 'No more simulated batches available'
+        : `New Analysis failed: ${err.message}`;
+      triggerToast(msg);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  // Theme Mode Switcher Handler
   const handleToggleTheme = () => {
     const nextTheme = themeMode === 'dark' ? 'light' : 'dark';
     setThemeMode(nextTheme);
@@ -63,55 +93,54 @@ export default function App() {
     }
   };
 
-  const triggerToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  // Opens the detail drawer immediately with the row data already on hand
+  // (so it doesn't feel like it's stalling), then fetches the full,
+  // PII-inclusive record in the background and swaps it in.
+  const handleSelectPatient = (patient) => {
+    setSelectedPatientId(patient.patient_id);
+    setPatientDetail(patient);
+    setDetailLoading(true);
+    fetchPatientDetail(patient.patient_id)
+      .then(setPatientDetail)
+      .catch((err) => triggerToast(`Failed to load patient detail: ${err.message}`))
+      .finally(() => setDetailLoading(false));
   };
 
-  // Toggle patient contact status: Pending -> Contacted -> Pending
-  const handleToggleContactStatus = (patientId) => {
-    setPatients(prev => prev.map(p => {
-      if (p.patient_id === patientId) {
-        const nextStatus = p.contact_status === 'Contacted' ? 'Pending Contact' : 'Contacted';
-        triggerToast(`Updated ${p.patient_name} status to '${nextStatus}'`);
-        return { ...p, contact_status: nextStatus, snoozed_until: null };
-      }
-      return p;
-    }));
+  const closeDetail = () => {
+    setSelectedPatientId(null);
+    setPatientDetail(null);
   };
 
-  // Snooze patient for 24h if unreachable at the moment
-  const handleSnoozePatient = (patientId) => {
-    setPatients(prev => prev.map(p => {
-      if (p.patient_id === patientId) {
-        const isCurrentlySnoozed = p.contact_status === 'Snoozed';
-        const nextStatus = isCurrentlySnoozed ? 'Pending Contact' : 'Snoozed';
-        const snoozeTime = isCurrentlySnoozed ? null : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        
-        triggerToast(
-          isCurrentlySnoozed 
-            ? `Cleared snooze for ${p.patient_name}` 
-            : `Snoozed reminder alerts for ${p.patient_name} (24 Hours)`
-        );
-        
-        return { 
-          ...p, 
-          contact_status: nextStatus, 
-          snoozed_until: snoozeTime 
-        };
-      }
-      return p;
-    }));
+  // Generic wrapper for the three status-changing actions. Calls the real
+  // backend endpoint, then reloads the queue from the database so every
+  // view (list, detail, metrics) reflects the same persisted truth.
+  const runAction = async (actionFn, patientId, successMsg) => {
+    setActionInFlight(true);
+    try {
+      await actionFn(patientId);
+      triggerToast(successMsg);
+      await loadQueue();
+      closeDetail();
+    } catch (err) {
+      triggerToast(`Action failed: ${err.message}`);
+    } finally {
+      setActionInFlight(false);
+    }
   };
 
-  // Handle email sent trigger
-  const handleEmailSent = (patientId, recipientEmail, subject) => {
-    setPatients(prev => prev.map(p => {
-      if (p.patient_id === patientId) {
-        return { ...p, contact_status: 'Contacted' };
-      }
-      return p;
-    }));
+  const handleMarkContacted = (patientId, notes) =>
+    runAction((id) => markContacted(id, notes), patientId, 'Patient marked as contacted');
+
+  const handleSnoozePatient = (patientId) =>
+    runAction(markSnoozed, patientId, 'Reminder snoozed for this patient');
+
+  const handleCloseCase = (patientId, reason) =>
+    runAction((id) => markClosed(id, reason), patientId, 'Case closed');
+
+  // EmailReminderModal calls this once it has actually sent the mail —
+  // treat a sent reminder as a real contact event in the database too.
+  const handleEmailSent = (patientId, recipientEmail) => {
+    handleMarkContacted(patientId);
     triggerToast(`Automated reminder email sent to ${recipientEmail}`);
   };
 
@@ -119,16 +148,11 @@ export default function App() {
 
   return (
     <div className={`min-h-screen ${isLight ? 'bg-slate-50 text-slate-900' : 'bg-dark-950 text-slate-100'} flex flex-col selection:bg-emerald-500 selection:text-black transition-colors duration-300`}>
-      
-      {/* 0. WhatsApp-Style Animated Splash Screen on Load */}
+
       {showSplash && (
-        <SplashScreen
-          themeMode={themeMode}
-          onFinish={() => setShowSplash(false)}
-        />
+        <SplashScreen themeMode={themeMode} onFinish={() => setShowSplash(false)} />
       )}
 
-      {/* Top Navbar Header */}
       <Navbar
         apiStatus={apiStatus}
         onOpenSettings={() => setIsSettingsOpen(true)}
@@ -137,10 +161,8 @@ export default function App() {
         onToggleTheme={handleToggleTheme}
       />
 
-      {/* Main Container - Dashboard view is always rendered directly */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
-        {/* Toast Alert Notification */}
+
         {toastMessage && (
           <div className={`fixed top-20 right-6 z-50 p-3 rounded-xl border text-xs shadow-2xl flex items-center space-x-2 animate-in fade-in duration-200 ${
             isLight ? 'bg-white border-emerald-500/40 text-emerald-800' : 'bg-dark-900 border-emerald-500/40 text-emerald-300'
@@ -151,18 +173,16 @@ export default function App() {
         )}
 
         <div className="space-y-6">
-          
-          {/* Sub-Bar: Model Status on Left & Tab Navigation Pills Centered Above Table & New Analysis Button on Right */}
+
           <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 rounded-xl border text-xs ${
             isLight ? 'bg-white border-slate-200 shadow-sm' : 'bg-dark-900/80 border-emerald-500/20'
           }`}>
             <div className="flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className={`w-2.5 h-2.5 rounded-full bg-emerald-500 ${isProcessing ? 'animate-pulse' : ''}`}></span>
               <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>Datawarehouse Ingestion Active</span>
               <span className={`${isLight ? 'text-slate-500' : 'text-slate-400'} font-mono`}>| {patients.length} Patient Accounts Scored</span>
             </div>
 
-            {/* View Switcher Pills placed directly above table */}
             <div className={`flex items-center space-x-1 p-1 rounded-xl border shadow-sm ${
               isLight ? 'bg-slate-100 border-slate-200' : 'bg-dark-950 border-emerald-500/30'
             }`}>
@@ -202,7 +222,7 @@ export default function App() {
               <button
                 onClick={handleNewAnalysis}
                 disabled={isProcessing}
-                className={`text-xs transition-colors flex items-center space-x-1 font-bold ${
+                className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 ${
                   isLight ? 'text-emerald-700 hover:text-emerald-900' : 'text-emerald-400 hover:text-emerald-300'
                 }`}
                 title="Run New Analysis"
@@ -213,10 +233,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Executive Financial & Risk KPI Overview Cards */}
           <MetricsOverview patients={patients} />
 
-          {/* View 1: Patient Risk Table View */}
           {activeTab === 'patients' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -228,15 +246,15 @@ export default function App() {
 
               <PatientTable
                 patients={patients}
-                onSelectPatient={(patient) => setSelectedPatient(patient)}
+                loading={isProcessing}
+                onSelectPatient={handleSelectPatient}
                 onOpenEmailModal={(patient) => setEmailPatient(patient)}
-                onToggleContactStatus={handleToggleContactStatus}
+                onMarkContacted={handleMarkContacted}
                 onSnoozePatient={handleSnoozePatient}
               />
             </div>
           )}
 
-          {/* View 2: Dashboard Analytics View */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
               <div className="flex items-center justify-between">
@@ -254,15 +272,18 @@ export default function App() {
 
       </main>
 
-      {/* Patient Detailed Risk Drawer Modal */}
-      {selectedPatient && (
+      {selectedPatientId && (
         <PatientDetailModal
-          patient={selectedPatient}
-          onClose={() => setSelectedPatient(null)}
+          patient={patientDetail}
+          loading={detailLoading}
+          actionInFlight={actionInFlight}
+          onClose={closeDetail}
+          onMarkContacted={handleMarkContacted}
+          onSnoozePatient={handleSnoozePatient}
+          onCloseCase={handleCloseCase}
         />
       )}
 
-      {/* Automated Email Reminder Modal */}
       {emailPatient && (
         <EmailReminderModal
           patient={emailPatient}
@@ -272,14 +293,12 @@ export default function App() {
         />
       )}
 
-      {/* FastAPI Server Config Modal */}
       <FastApiConfigModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onStatusChange={(status) => setApiStatus(status)}
       />
 
-      {/* Footer */}
       <footer className={`border-t py-6 text-xs text-center ${
         isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-emerald-500/10 bg-dark-950 text-slate-500'
       }`}>

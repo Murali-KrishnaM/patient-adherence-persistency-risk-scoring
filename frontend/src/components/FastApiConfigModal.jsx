@@ -30,45 +30,37 @@ export default function FastApiConfigModal({ isOpen, onClose, onStatusChange }) 
     if (onStatusChange) onStatusChange(res);
   };
 
-  const fastApiPythonSnippet = `# MedCare FastAPI Backend Service (main.py)
-from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import pandas as pd
-import io
+  const flaskPythonSnippet = `# MedCare Flask Backend Service (app.py)
+# Run locally: flask --app app run --debug --port 5000
 
-app = FastAPI(title="MedCare Prediction API", version="2.4.0")
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": ["http://localhost:5173"]}})
 
-@app.get("/health")
-def health_check():
-    return {"status": "healthy", "model": "MedCare XGBoost / Random Forest"}
+@app.route("/api/stats")
+def stats():
+    return jsonify({"status": "healthy"})
 
-@app.post("/api/v1/predict")
-async def predict_file(file: UploadFile = File(...)):
-    contents = await file.read()
-    df = pd.read_csv(io.BytesIO(contents))
-    # Run model prediction pipeline
-    return {"status": "success", "count": len(df)}
+@app.route("/api/queue")
+def queue():
+    # Returns the active risk-scored patient queue
+    return jsonify([])
 
-# Run with: uvicorn main:app --reload --port 8000
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
 `;
 
   const copySnippet = () => {
-    navigator.clipboard.writeText(fastApiPythonSnippet);
+    navigator.clipboard.writeText(flaskPythonSnippet);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div 
+      <div
         className="w-full max-w-xl bg-dark-900 border border-emerald-500/30 rounded-2xl p-6 shadow-2xl space-y-6 relative overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
@@ -79,8 +71,8 @@ async def predict_file(file: UploadFile = File(...)):
               <Server className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">FastAPI Backend Server Settings</h3>
-              <p className="text-xs text-slate-400">Configure connection to external Python model API</p>
+              <h3 className="text-base font-bold text-white">Flask Backend Server Settings</h3>
+              <p className="text-xs text-slate-400">Configure connection to the MedCare Flask + PostgreSQL API</p>
             </div>
           </div>
 
@@ -94,13 +86,13 @@ async def predict_file(file: UploadFile = File(...)):
 
         {/* Server URL Input */}
         <div className="space-y-2">
-          <label className="text-xs font-mono uppercase tracking-wider text-slate-300">FastAPI Host URL</label>
+          <label className="text-xs font-mono uppercase tracking-wider text-slate-300">Flask Host URL</label>
           <div className="flex space-x-2">
             <input
               type="text"
               value={url}
               onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="http://localhost:8000"
+              placeholder="http://localhost:5000"
               className="flex-1 bg-dark-950 border border-emerald-500/30 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
             />
             <button
@@ -125,10 +117,12 @@ async def predict_file(file: UploadFile = File(...)):
 
             <div>
               <span className="font-semibold text-white">
-                {testing ? 'Testing connection...' : testResult?.online ? 'FastAPI Server Online' : 'Server Offline / Standalone Engine Active'}
+                {testing ? 'Testing connection...' : testResult?.online ? 'Flask Server Online' : 'Server Offline'}
               </span>
               <p className="text-[11px] text-slate-400">
-                {testResult?.online ? 'Connected to external backend endpoint.' : 'Dashboard uses high-precision Client ML Engine when API is offline.'}
+                {testResult?.online
+                  ? 'Connected to the Flask API and PostgreSQL datawarehouse.'
+                  : (testResult?.error || 'Could not reach the Flask backend at this URL.')}
               </p>
             </div>
           </div>
@@ -141,12 +135,12 @@ async def predict_file(file: UploadFile = File(...)):
           </button>
         </div>
 
-        {/* FastAPI Python Snippet Reference */}
+        {/* Flask Python Snippet Reference */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center space-x-1">
               <Code className="w-3.5 h-3.5 text-emerald-400" />
-              <span>FastAPI Reference Implementation</span>
+              <span>Flask Reference Implementation</span>
             </span>
             <button
               onClick={copySnippet}
@@ -158,7 +152,7 @@ async def predict_file(file: UploadFile = File(...)):
           </div>
 
           <pre className="p-3 rounded-xl bg-dark-950 border border-emerald-500/20 text-[10px] font-mono text-emerald-300/90 overflow-x-auto max-h-36">
-            {fastApiPythonSnippet}
+            {flaskPythonSnippet}
           </pre>
         </div>
 
