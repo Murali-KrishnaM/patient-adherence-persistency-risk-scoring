@@ -1,98 +1,102 @@
-# Backend: Patient Adherence Risk Warehouse + API
+# MedCare Patient Adherence Risk Platform
 
-This is the Postgres warehouse, ETL, and Flask API for the demo. It is
-designed to be run **locally**, where you already have PostgreSQL and
-your notebook's CSV files.
+This repository contains the complete, production-ready stack for the MedCare Patient Adherence Risk Platform. It features a machine-learning powered backend pipeline, a secure PostgreSQL data warehouse, a Flask API, and a modern, responsive Vite/React frontend dashboard with Role-Based Access Control (RBAC).
 
-## What this is / isn't
+The system is designed to incrementally score patients for non-adherence/persistency risk as new prescription data arrives, enabling care teams to proactively reach out to high-risk patients.
 
-- **Is:** a real, working incremental pipeline — new prescription data
-  lands in Postgres, only the affected patients get rescored, PII is
-  kept in a separate schema the model never touches.
-- **Isn't:** literal day-by-day real-time streaming. Each "Simulate Next
-  Day" click reveals one pre-built batch of ~16 previously-unseen demo
-  patients with their real prescription history. This is an honest
-  simplification for demo pacing — say so if a judge asks, it's still
-  real data and real incremental scoring, just batched rather than
-  literally timestamped to the second.
+## Architecture Overview
 
-## One-time setup
+1. **Frontend (Vite + React)**: A dynamic, premium dashboard featuring dark/light modes, data visualizations, and an organized queue for care coordinators.
+2. **Backend API (Flask)**: Serves the frontend, manages JWT authentication, and securely queries the data warehouse.
+3. **Data Warehouse (PostgreSQL)**: Strictly segregated schemas for security:
+   - `clinical`: Medical history, prescription data, and ML risk scores.
+   - `pii`: Patient Personally Identifiable Information (names, contacts). Isolated from the ML models.
+   - `ops`: Operational state (batch tracking, application metrics).
+   - `auth`: Role-Based Access Control (RBAC) tables, user credentials, and roles.
+4. **Machine Learning Pipeline**: Incrementally scores patients using an XGBoost model and SHAP values for explainability.
+
+## Security & RBAC
+
+The platform implements strict Role-Based Access Control:
+
+- **Admin (`admin`)**: Full access. Can view the queue, patient details, and crucially, has the authority to trigger the simulation of new data batches.
+- **Care Coordinator (`rep`)**: Restricted access. Can view the queue and process patient outreach (mark contacted/closed), but cannot ingest new data.
+
+API endpoints are secured using JSON Web Tokens (JWT).
+
+## Local Development Setup
+
+The system is designed to run locally. Ensure you have PostgreSQL, Python 3.9+, and Node.js installed.
+
+### 1. Database & Backend Setup
 
 ```bash
-cd backend
-pip install -r requirements.txt
-
 # 1. Create an empty Postgres database
 createdb adherence_warehouse
 
-# 2. Export your trained model from the notebook
-#    -> open NewDawn.ipynb, paste the contents of
-#       scripts/export_model_FROM_NOTEBOOK.py into a new cell after your
-#       XGBoost training cell, and run it.
-#    -> copy the resulting model_artifacts/ folder into backend/model_artifacts/
-#       (merge with the existing folder — batches/ will be added next)
+# 2. Install Python dependencies
+pip install -r requirements.txt
 
-# 3. Build the demo patient pool + batch files from your real CSVs
+# 3. Export your trained model (If not already present)
+# Paste `scripts/export_model_FROM_NOTEBOOK.py` into your Jupyter Notebook after XGBoost training, run it, and place the artifacts in `backend/model_artifacts/`.
+
+# 4. Prepare data batches (If not already present)
 python scripts/prepare_batches.py \
     --beneficiary-csv /path/to/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv \
     --pde-csv /path/to/DE1_0_2008_to_2010_Prescription_Drug_Events_Sample_1.csv \
     --pool-size 480 \
     --batch-size 16
 
-# 4. Create the schema and load patient identities (no fact data yet)
+# 5. Initialize the database schema and seed demo users
+# This creates the clinical, pii, ops, and auth schemas, and seeds the 'admin' and 'rep' accounts.
 export PG_DATABASE=adherence_warehouse PG_USER=postgres PG_PASSWORD=postgres
 python scripts/init_db.py
 ```
 
-After this, `clinical.dim_patient_clinical` and `pii.dim_patient_pii` are
-populated, but `clinical.risk_scores` is empty and the dashboard queue
-will be empty — exactly as intended. The first "Simulate Next Day" click
-introduces the first cohort.
+### 2. Running the Application
 
-## Running the API
+You need two terminal windows to run the full stack.
 
+**Terminal 1: Start the Backend API**
 ```bash
 export PG_DATABASE=adherence_warehouse PG_USER=postgres PG_PASSWORD=postgres
 flask --app app run --debug --port 5000
 ```
 
-## Demo script (suggested flow for judges)
+**Terminal 2: Start the Frontend App**
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-1. Open the dashboard — queue is empty, stats show 0 patients scored.
-2. Click **Simulate Next Day** — ~16 new patients appear, sorted High → Low,
-   ranked by probability within each tier.
-3. Open a High Risk patient — show the SHAP-derived "why" factors, then
-   the contact card (name/phone/email — clearly demo data).
-4. Click **Mark Contacted** — patient disappears from the queue immediately.
-5. Click **Simulate Next Day** again — a fresh batch appears; previously
-   contacted/closed patients never resurface in the queue.
-6. Optionally hit `/api/stats` to show the tier/status breakdown updating
-   live — good if a judge asks "how do you know this scales."
+The application will be available at `http://localhost:3000`.
 
-## API reference
+## Demo Script (Suggested Flow)
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/stats` | Tier × status counts, current batch number |
-| GET | `/api/queue?tier=High&limit=50` | Ranked outreach queue (no PII) |
-| GET | `/api/patient/<id>` | Full detail incl. PII + SHAP top factors |
-| POST | `/api/patient/<id>/contact` | Mark contacted, removes from queue |
-| POST | `/api/patient/<id>/close` | Mark case closed (resolved elsewhere) |
-| POST | `/api/patient/<id>/snooze` | Mark snoozed, removes from queue |
-| POST | `/api/simulate-next-batch` | Ingest next batch, score, update queue |
+1. **Login as Admin**: Open the dashboard and log in with `admin` / `password`.
+2. **Initial State**: The queue is empty, and stats show 0 patients scored (as intended).
+3. **Simulate Data**: Click **Simulate Next Day**. A batch of ~16 new patients will be ingested, scored by the ML model, and will appear in the queue, sorted High → Low risk.
+4. **Explainability**: Open a High Risk patient to view SHAP-derived "why" factors (e.g., "high number of distinct pharmacies") alongside their contact card.
+5. **Role Switch**: Log out, and log back in as the Care Coordinator (`rep` / `password`). 
+6. **Outreach Workflow**: Notice the "Simulate Next Day" button is gone. Click **Mark Contacted** on a patient. They immediately disappear from the queue.
+7. **Incrementality**: Log back in as `admin` and click **Simulate Next Day** again. A fresh batch appears. Previously contacted patients do not resurface.
 
-## Design notes for Q&A
+## API Reference
 
-- **PII isolation:** `pii.dim_patient_pii` is a separate schema. The model
-  scoring path (`etl.py` → `model_utils.py`) only ever queries `clinical.*`
-  and `ops.*` — never `pii.*`. Only `GET /api/patient/<id>` joins across
-  schemas, and only for one patient at a time, at the point a rep is
-  about to make contact.
-- **Risk tiers from a binary model:** the trained model outputs
-  `predict_proba` (continuous 0–1), not just 0/1. Tiers are threshold
-  bands over that probability (`model_artifacts/risk_thresholds.json`,
-  tunable); ranking within a tier is the raw probability, descending —
-  the most urgent patient is always first automatically.
-- **Why batches, not true real-time:** explained above. If pressed, this
-  is the same tradeoff CMS batches claims data in the real world — daily
-  or weekly claims batches, not live per-transaction streaming.
+| Method | Path | Auth Required | Role | Purpose |
+|---|---|---|---|---|
+| POST | `/api/login` | No | - | Authenticate and receive JWT |
+| GET | `/api/me` | Yes | Any | Get current user profile |
+| GET | `/api/stats` | Yes | Any | Tier × status counts, current batch number |
+| GET | `/api/queue?tier=High` | Yes | Any | Ranked outreach queue (no PII) |
+| GET | `/api/patient/<id>` | Yes | Any | Full detail incl. PII + SHAP top factors |
+| POST | `/api/patient/<id>/contact`| Yes | Any | Mark contacted, removes from queue |
+| POST | `/api/patient/<id>/close` | Yes | Any | Mark case closed (resolved elsewhere) |
+| POST | `/api/simulate-next-batch`| Yes | **Admin** | Ingest next batch, score, update queue |
+
+## Design Notes for Q&A
+
+- **PII Isolation:** `pii.dim_patient_pii` is a separate schema. The ML scoring path (`etl.py` → `model_utils.py`) only ever queries `clinical.*` and `ops.*` — never `pii.*`. Only `GET /api/patient/<id>` joins across schemas, strictly at the moment a representative views the contact card.
+- **Risk Tiers:** The trained model outputs `predict_proba` (continuous 0–1). Tiers are threshold bands over that probability, while ranking within a tier utilizes the raw probability. The most urgent patient is always first.
+- **Simulation Strategy:** Instead of true real-time streaming, the demo utilizes pre-built batches of unseen patients. This simulates a real-world nightly or weekly batch ingestion process (common in healthcare like CMS claims processing) while keeping the demo perfectly paced.

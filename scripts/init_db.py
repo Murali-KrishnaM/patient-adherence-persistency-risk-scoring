@@ -2,12 +2,13 @@
 Run this ONCE after prepare_batches.py, and after your Postgres server
 and empty database already exist.
 
-1. Creates the schema (clinical / pii / ops).
-2. Loads the demo patient pool into clinical.dim_patient_clinical and
+1. Creates the schemas (clinical / pii / ops / auth).
+2. Loads the simulated patient pool into clinical.dim_patient_clinical and
    pii.dim_patient_pii -- identities exist, but NO prescription events
    and NO risk scores yet. Those only appear as you click
-   "Simulate Next Day" in the running app.
+   "Simulate Next Day" in the running app as an admin.
 3. Resets ops.sim_state to batch 0.
+4. Seeds 'admin' and 'rep' users for RBAC.
 
 Usage:
     python scripts/init_db.py
@@ -23,9 +24,12 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from db import get_connection  # noqa: E402
 
+from werkzeug.security import generate_password_hash
+
 HERE = Path(__file__).resolve().parent.parent
 ARTIFACTS = HERE / "model_artifacts"
 SCHEMA_SQL = HERE / "sql" / "schema.sql"
+AUTH_SCHEMA_SQL = HERE / "sql" / "auth_schema.sql"
 
 CHRONIC_COLS = [
     "SP_ALZHDMTA", "SP_CHF", "SP_CHRNKIDN", "SP_CNCR", "SP_COPD",
@@ -40,6 +44,33 @@ def run_schema(conn):
         cur.execute(sql)
     conn.commit()
     print("Schema created (clinical / pii / ops).")
+
+def run_auth_schema(conn):
+    sql = AUTH_SCHEMA_SQL.read_text()
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        # Seed roles
+        cur.execute("INSERT INTO auth.roles (name) VALUES ('admin'), ('care_coordinator') ON CONFLICT DO NOTHING;")
+        
+        # Seed users
+        admin_hash = generate_password_hash("password")
+        rep_hash = generate_password_hash("password")
+        
+        cur.execute("SELECT id FROM auth.roles WHERE name = 'admin'")
+        admin_role_id = cur.fetchone()[0]
+        cur.execute("SELECT id FROM auth.roles WHERE name = 'care_coordinator'")
+        rep_role_id = cur.fetchone()[0]
+        
+        cur.execute(
+            "INSERT INTO auth.users (username, password_hash, role_id) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            ("admin", admin_hash, admin_role_id)
+        )
+        cur.execute(
+            "INSERT INTO auth.users (username, password_hash, role_id) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            ("rep", rep_hash, rep_role_id)
+        )
+    conn.commit()
+    print("Auth schema created and seeded with 'admin' and 'rep'.")
 
 
 def load_clinical(conn):
@@ -88,6 +119,7 @@ def main():
     conn = get_connection()
     try:
         run_schema(conn)
+        run_auth_schema(conn)
         load_clinical(conn)
         load_pii(conn)
         reset_sim_state(conn)

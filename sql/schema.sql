@@ -1,15 +1,16 @@
 -- =====================================================================
 -- Patient Adherence & Persistency Risk Scoring — Data Warehouse Schema
 -- =====================================================================
--- Design notes (for judges / documentation):
+-- Design notes (for documentation):
 --
--- 1. CLINICAL vs PII SEPARATION
+-- 1. CLINICAL vs PII vs AUTH SEPARATION
 --    dim_patient_clinical holds only what the ML model is allowed to see
 --    (demographics codes, chronic conditions). dim_patient_pii holds
 --    name/phone/email and lives in a separate schema. The model-scoring
 --    code path (etl.py -> score_patients) NEVER queries the pii schema.
 --    Only the Flask API's single-patient detail endpoint joins across
---    schemas, and only when a rep is about to make contact.
+--    schemas, and only when an authenticated representative is viewing it.
+--    The auth schema (in auth_schema.sql) manages RBAC and user identities.
 --
 -- 2. STAR-SCHEMA SHAPE
 --    fact_prescription_events is the fact table (one row per fill).
@@ -20,7 +21,7 @@
 -- 3. INCREMENTAL LOADING
 --    sim_batches records each "Simulate Next Day" ingestion event.
 --    Every fact row is tagged with the batch that introduced it, so
---    the demo can show exactly what changed after each simulated batch.
+--    the system can track exactly what changed after each simulated batch.
 -- =====================================================================
 
 CREATE SCHEMA IF NOT EXISTS clinical;   -- model-safe data only

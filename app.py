@@ -1,19 +1,21 @@
 """
-Flask API for the Patient Adherence & Persistency Risk Scoring demo.
+Flask API for the Patient Adherence & Persistency Risk Scoring Platform.
 
 Run locally:
     flask --app app run --debug --port 5000
 
 Endpoints (all JSON):
+    POST /api/login                                 body: {"username": "...", "password": "..."}
+    GET  /api/me
     GET  /api/stats
     GET  /api/batches-available
     GET  /api/queue?tier=High&limit=50
     GET  /api/patient/<patient_id>
     POST /api/patient/<patient_id>/contact
-    POST /api/patient/<patient_id>/close        body: {"reason": "..."}  (optional)
+    POST /api/patient/<patient_id>/close            body: {"reason": "..."}  (optional)
     POST /api/patient/<patient_id>/snooze
-    POST /api/patient/<patient_id>/reset         -- reverts back to needs_contact
-    POST /api/simulate-next-batch
+    POST /api/patient/<patient_id>/reset             -- reverts back to needs_contact
+    POST /api/simulate-next-batch                    -- requires 'admin' role
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -23,6 +25,8 @@ from flask_cors import CORS
 
 from db import query, query_one
 import etl
+from werkzeug.security import check_password_hash
+from auth import require_auth, require_role, generate_token, get_current_user
 
 app = Flask(__name__)
 
@@ -38,7 +42,45 @@ CORS(
 TIER_RANK_SQL = "CASE risk_tier WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END"
 
 
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password")
+    if not username or not password:
+        return jsonify({"error": "Missing credentials"}), 400
+
+    user = query_one(
+        """
+        SELECT u.id, u.username, u.password_hash, r.name as role
+        FROM auth.users u
+        JOIN auth.roles r ON u.role_id = r.id
+        WHERE u.username = %s
+        """,
+        (username,)
+    )
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    token = generate_token(user["id"], user["username"], user["role"])
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"]
+        }
+    })
+
+@app.route("/api/me")
+@require_auth
+def get_me():
+    return jsonify({"user": request.user})
+
+
 @app.route("/api/stats")
+@require_auth
 def stats():
     counts = query(
         """
@@ -60,6 +102,7 @@ def stats():
 
 
 @app.route("/api/batches-available")
+@require_auth
 def batches_available():
     """
     Tells the frontend exactly how many simulated batches exist on disk
@@ -83,6 +126,7 @@ def batches_available():
 
 
 @app.route("/api/queue")
+@require_auth
 def queue():
     tier = request.args.get("tier")  # optional filter: High / Medium / Low
     limit = int(request.args.get("limit", 50))
@@ -120,6 +164,7 @@ def queue():
 
 
 @app.route("/api/patient/<patient_id>")
+@require_auth
 def patient_detail(patient_id):
     row = query_one(
         """
@@ -184,6 +229,7 @@ def _update_status(patient_id, status, notes=None):
 
 
 @app.route("/api/batches")
+@require_role("admin")
 def list_batches():
     """
     One row per simulated batch, with a live breakdown of what happened
@@ -208,6 +254,7 @@ def list_batches():
 
 
 @app.route("/api/batch/<int:batch_number>/patients")
+@require_role("admin")
 def batch_patients(batch_number):
     """
     All patients from a specific past (or current) batch, with their
@@ -233,6 +280,7 @@ def batch_patients(batch_number):
 
 
 @app.route("/api/patient/<patient_id>/history")
+@require_auth
 def patient_history(patient_id):
     """Full audit trail for one patient -- every status change, oldest last."""
     rows = query(
@@ -248,23 +296,27 @@ def patient_history(patient_id):
 
 
 @app.route("/api/patient/<patient_id>/contact", methods=["POST"])
+@require_auth
 def mark_contacted(patient_id):
     notes = (request.get_json(silent=True) or {}).get("notes")
     return _update_status(patient_id, "contacted", notes)
 
 
 @app.route("/api/patient/<patient_id>/close", methods=["POST"])
+@require_auth
 def mark_closed(patient_id):
     reason = (request.get_json(silent=True) or {}).get("reason")
     return _update_status(patient_id, "case_closed", reason)
 
 
 @app.route("/api/patient/<patient_id>/snooze", methods=["POST"])
+@require_auth
 def mark_snoozed(patient_id):
     return _update_status(patient_id, "snoozed")
 
 
 @app.route("/api/patient/<patient_id>/reset", methods=["POST"])
+@require_auth
 def mark_reset(patient_id):
     """
     Reverts a patient back to 'needs_contact'. Undoes an accidental
@@ -275,6 +327,7 @@ def mark_reset(patient_id):
 
 
 @app.route("/api/simulate-next-batch", methods=["POST"])
+@require_role("admin")
 def simulate_next_batch():
     from db import get_connection
     conn = get_connection()
