@@ -6,7 +6,6 @@ export function getApiUrl() {
 export function setApiUrl(url) {
   localStorage.setItem('medcare_api_url', url);
 }
-// Legacy aliases so existing imports don't crash the build
 export const getFastApiUrl = getApiUrl;
 export const setFastApiUrl = setApiUrl;
 
@@ -63,13 +62,30 @@ export async function markSnoozed(patientId) {
   return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/snooze`, { method: 'POST' }));
 }
 
+export async function resetPatientStatus(patientId) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/reset`, { method: 'POST' }));
+}
+
 export async function simulateNextBatch() {
   return handle(await fetch(`${API_BASE_URL}/api/simulate-next-batch`, { method: 'POST' }));
 }
 
-// Maps the backend's real "status" values to the UI's display labels.
-// This is the single place that translation happens — components
-// should never invent their own fallback status strings.
+export async function getBatchStatus() {
+  return handle(await fetch(`${API_BASE_URL}/api/batches-available`));
+}
+
+export async function getBatches() {
+  return handle(await fetch(`${API_BASE_URL}/api/batches`));
+}
+
+export async function getBatchPatients(batchNumber) {
+  return handle(await fetch(`${API_BASE_URL}/api/batch/${batchNumber}/patients`));
+}
+
+export async function getPatientHistory(patientId) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/history`));
+}
+
 const STATUS_LABELS = {
   needs_contact: 'Pending Contact',
   contacted: 'Contacted',
@@ -77,10 +93,6 @@ const STATUS_LABELS = {
   case_closed: 'Closed',
 };
 
-// Single mapping function used for BOTH the queue list and the single-patient
-// detail response, so a patient's risk_tier/risk_score/status can never
-// disagree between the list view and the detail drawer — they're always
-// derived the exact same way from the exact same raw row shape.
 function mapPatientRow(r) {
   return {
     ...r,
@@ -92,18 +104,11 @@ function mapPatientRow(r) {
   };
 }
 
-// Loads the current queue as-is. Use this for the initial page load and
-// for refreshing after a status-changing action — it does NOT advance
-// the simulated batch.
 export async function loadQueueData() {
   const rows = await getQueue({ limit: 100 });
   return rows.map(mapPatientRow);
 }
 
-// Advances the simulation to the next batch, then returns the refreshed
-// queue. Use this ONLY for the "New Analysis" button. Errors (e.g. "no
-// more batches available") are thrown, not swallowed, so the UI can tell
-// the user what actually happened instead of pretending it worked.
 export async function processPatientData() {
   await simulateNextBatch();
   const rows = await getQueue({ limit: 100 });

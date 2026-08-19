@@ -5,7 +5,6 @@ import Visualizations from './components/Visualizations';
 import PatientTable from './components/PatientTable';
 import PatientDetailModal from './components/PatientDetailModal';
 import FastApiConfigModal from './components/FastApiConfigModal';
-import EmailReminderModal from './components/EmailReminderModal';
 import SplashScreen from './components/SplashScreen';
 import {
   loadQueueData,
@@ -15,6 +14,8 @@ import {
   markContacted,
   markSnoozed,
   markClosed,
+  resetPatientStatus,
+  getBatchStatus,
 } from './services/api';
 import { CheckCircle2, ShieldCheck, RefreshCw, Activity } from 'lucide-react';
 
@@ -24,7 +25,6 @@ export default function App() {
   const [patientDetail, setPatientDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionInFlight, setActionInFlight] = useState(false);
-  const [emailPatient, setEmailPatient] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState('patients');
   const [apiStatus, setApiStatus] = useState({ online: false });
@@ -33,20 +33,31 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState(null);
   const [themeMode, setThemeMode] = useState('dark');
   const [showSplash, setShowSplash] = useState(true);
+  const [batchStatus, setBatchStatus] = useState({ current_batch: 0, total_batches: 0, has_more: true });
 
   useEffect(() => {
     checkApiHealth().then(setApiStatus);
     loadQueue();
+    refreshBatchStatus();
   }, []);
+
+  const refreshBatchStatus = async () => {
+    try {
+      const status = await getBatchStatus();
+      setBatchStatus(status);
+    } catch (err) {
+      // Non-fatal — worst case the button just doesn't show a live count.
+      console.error('Failed to load batch status:', err.message);
+    }
+  };
 
   const triggerToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Loads the queue as it currently stands in the database.
-  // Does NOT advance the simulated batch — safe to call any time
-  // (initial mount, after an action, etc).
+  // Loads the queue as it currently stands. Does NOT advance the
+  // simulated batch — safe to call any time (mount, after an action).
   const loadQueue = async () => {
     setIsProcessing(true);
     try {
@@ -61,8 +72,11 @@ export default function App() {
   };
 
   // "New Analysis" — advances to the next simulated batch, then reloads.
-  // This is the only place that should ever call the simulate endpoint.
   const handleNewAnalysis = async () => {
+    if (!batchStatus.has_more) {
+      triggerToast('All simulated batches have been loaded — nothing left to advance to.');
+      return;
+    }
     setIsProcessing(true);
     try {
       const result = await processPatientData();
@@ -76,6 +90,7 @@ export default function App() {
       triggerToast(msg);
     } finally {
       setIsProcessing(false);
+      refreshBatchStatus();
     }
   };
 
@@ -93,9 +108,6 @@ export default function App() {
     }
   };
 
-  // Opens the detail drawer immediately with the row data already on hand
-  // (so it doesn't feel like it's stalling), then fetches the full,
-  // PII-inclusive record in the background and swaps it in.
   const handleSelectPatient = (patient) => {
     setSelectedPatientId(patient.patient_id);
     setPatientDetail(patient);
@@ -111,9 +123,8 @@ export default function App() {
     setPatientDetail(null);
   };
 
-  // Generic wrapper for the three status-changing actions. Calls the real
-  // backend endpoint, then reloads the queue from the database so every
-  // view (list, detail, metrics) reflects the same persisted truth.
+  // Generic wrapper for status-changing actions: call the real backend
+  // endpoint, reload the queue from the database, close the drawer.
   const runAction = async (actionFn, patientId, successMsg) => {
     setActionInFlight(true);
     try {
@@ -137,11 +148,18 @@ export default function App() {
   const handleCloseCase = (patientId, reason) =>
     runAction((id) => markClosed(id, reason), patientId, 'Case closed');
 
-  // EmailReminderModal calls this once it has actually sent the mail —
-  // treat a sent reminder as a real contact event in the database too.
-  const handleEmailSent = (patientId, recipientEmail) => {
-    handleMarkContacted(patientId);
-    triggerToast(`Automated reminder email sent to ${recipientEmail}`);
+  // Undo — moves a Snoozed/Contacted/Closed patient back to Pending.
+  const handleReactivate = (patientId) =>
+    runAction(resetPatientStatus, patientId, 'Patient reactivated — back in pending queue');
+
+  // "Send automated email" — no real email is sent (simulated data), it
+  // just marks the patient as contacted, per how this demo is meant to work.
+  const handleSendEmail = (patientId, recipientEmail) => {
+    runAction(
+      (id) => markContacted(id, 'Automated email reminder sent'),
+      patientId,
+      `Automated reminder email sent to ${recipientEmail}`
+    );
   };
 
   const isLight = themeMode === 'light';
@@ -159,6 +177,7 @@ export default function App() {
         onNewAnalysis={handleNewAnalysis}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
+        batchStatus={batchStatus}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -219,16 +238,22 @@ export default function App() {
                 <span>{dataSourceInfo || 'Datawarehouse'}</span>
               </span>
 
+              {batchStatus.total_batches > 0 && (
+                <span className="px-2.5 py-1 rounded-md border font-mono text-[11px] bg-slate-100 border-slate-200 text-slate-600 dark:bg-dark-950 dark:border-emerald-500/20 dark:text-slate-400">
+                  Batch {batchStatus.current_batch} of {batchStatus.total_batches}
+                </span>
+              )}
+
               <button
                 onClick={handleNewAnalysis}
-                disabled={isProcessing}
-                className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 ${
+                disabled={isProcessing || !batchStatus.has_more}
+                className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 disabled:cursor-not-allowed ${
                   isLight ? 'text-emerald-700 hover:text-emerald-900' : 'text-emerald-400 hover:text-emerald-300'
                 }`}
-                title="Run New Analysis"
+                title={batchStatus.has_more ? 'Run New Analysis' : 'All simulated batches loaded'}
               >
                 <RefreshCw className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
-                <span>New Analysis</span>
+                <span>{batchStatus.has_more ? 'New Analysis' : 'All Batches Loaded'}</span>
               </button>
             </div>
           </div>
@@ -248,9 +273,10 @@ export default function App() {
                 patients={patients}
                 loading={isProcessing}
                 onSelectPatient={handleSelectPatient}
-                onOpenEmailModal={(patient) => setEmailPatient(patient)}
                 onMarkContacted={handleMarkContacted}
                 onSnoozePatient={handleSnoozePatient}
+                onReactivate={handleReactivate}
+                onSendEmail={handleSendEmail}
               />
             </div>
           )}
@@ -281,15 +307,7 @@ export default function App() {
           onMarkContacted={handleMarkContacted}
           onSnoozePatient={handleSnoozePatient}
           onCloseCase={handleCloseCase}
-        />
-      )}
-
-      {emailPatient && (
-        <EmailReminderModal
-          patient={emailPatient}
-          themeMode={themeMode}
-          onClose={() => setEmailPatient(null)}
-          onEmailSent={handleEmailSent}
+          onReactivate={handleReactivate}
         />
       )}
 

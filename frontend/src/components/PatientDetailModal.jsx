@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, ShieldAlert, PhoneCall, Send, CheckCircle2, Activity, Clock, XCircle, Loader2 } from 'lucide-react';
+import { X, ShieldAlert, Send, CheckCircle2, Activity, Clock, XCircle, Loader2, RotateCcw, Phone, Mail } from 'lucide-react';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
+import { getSyntheticIdentity } from '../utils/syntheticIdentity';
 
 export default function PatientDetailModal({
   patient,
@@ -10,18 +11,43 @@ export default function PatientDetailModal({
   onMarkContacted,
   onSnoozePatient,
   onCloseCase,
+  onReactivate,
 }) {
   const [reason, setReason] = useState('');
+  const [armedAction, setArmedAction] = useState(null);
 
   if (!patient) return null;
 
   const tier = getRiskTierMeta(patient.risk_tier);
   const reasons = getReasons(patient);
   const conditions = getConditionTags(patient);
+  const { name, phone, email } = getSyntheticIdentity(patient.patient_id);
   const isContacted = patient.contact_status === 'Contacted';
   const isSnoozed = patient.contact_status === 'Snoozed';
   const isClosed = patient.contact_status === 'Closed';
-  const isActionable = !isContacted && !isClosed && !actionInFlight;
+  const isActionable = !isContacted && !isClosed && !isSnoozed && !actionInFlight;
+  const canReactivate = (isContacted || isSnoozed || isClosed) && !actionInFlight;
+
+  const arm = (key) => {
+    setArmedAction(key);
+    setTimeout(() => setArmedAction((cur) => (cur === key ? null : cur)), 3000);
+  };
+
+  const ActionButton = ({ actionKey, onCommit, className, icon, label, title }) => {
+    const isArmed = armedAction === actionKey;
+    return (
+      <button
+        onClick={() => (isArmed ? (setArmedAction(null), onCommit()) : arm(actionKey))}
+        disabled={actionInFlight}
+        title={isArmed ? 'Click again to confirm' : title}
+        className={isArmed
+          ? 'px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 bg-red-600 hover:bg-red-700 text-white shadow-sm disabled:opacity-50'
+          : className}
+      >
+        {isArmed ? <span>Confirm?</span> : <>{icon}<span>{label}</span></>}
+      </button>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex justify-end transition-opacity duration-300">
@@ -39,15 +65,17 @@ export default function PatientDetailModal({
               tier.isLow ? 'bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/40' :
               'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-500/30'
             }`}>
-              {(patient.patient_name || patient.patient_id || 'P').charAt(0)}
+              {name.charAt(0)}
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                {patient.patient_name || `Patient ${patient.patient_id}`}
+                {name}
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                ID: {patient.patient_id} • {patient.age ?? 'N/A'} yrs
-                {patient.contact_number ? ` • ${patient.contact_number}` : ''}
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center flex-wrap gap-x-2">
+                <span>ID: {patient.patient_id}</span>
+                <span>• {patient.age ?? 'N/A'} yrs</span>
+                <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
+                <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
               </p>
             </div>
           </div>
@@ -141,7 +169,7 @@ export default function PatientDetailModal({
             </div>
           </div>
 
-          {/* 4. Contact / Resolution Notes */}
+          {/* 4. Notes */}
           {isActionable && (
             <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-emerald-500/10">
               <label className="text-xs font-mono uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold">
@@ -163,46 +191,61 @@ export default function PatientDetailModal({
         <div className="p-4 border-t border-slate-200 dark:border-emerald-500/20 bg-slate-50 dark:bg-dark-950 sticky bottom-0">
           {isActionable ? (
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => onSnoozePatient(patient.patient_id)}
-                disabled={actionInFlight}
+              <ActionButton
+                actionKey="snooze"
+                onCommit={() => onSnoozePatient(patient.patient_id)}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center space-x-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:bg-dark-850 dark:hover:bg-dark-800 dark:text-purple-300 dark:border-purple-500/30 disabled:opacity-50"
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Snooze</span>
-              </button>
+                icon={<Clock className="w-3.5 h-3.5" />}
+                label="Snooze"
+                title="Patient unreachable? Snooze this reminder"
+              />
 
-              <button
-                onClick={() => onCloseCase(patient.patient_id, reason || undefined)}
-                disabled={actionInFlight}
+              <ActionButton
+                actionKey="close"
+                onCommit={() => onCloseCase(patient.patient_id, reason || undefined)}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 dark:bg-dark-850 dark:hover:bg-dark-800 dark:text-slate-300 dark:border-slate-700 disabled:opacity-50"
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                <span>Close Case</span>
-              </button>
+                icon={<XCircle className="w-3.5 h-3.5" />}
+                label="Close Case"
+                title="Close this case"
+              />
 
-              <button
-                onClick={() => onMarkContacted(patient.patient_id, reason || undefined)}
-                disabled={actionInFlight}
-                className="ml-auto px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/30 transition-all flex items-center space-x-1.5 disabled:opacity-50"
-              >
-                {actionInFlight ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                <span>Mark as Contacted</span>
-              </button>
+              <div className="ml-auto">
+                <ActionButton
+                  actionKey="contact"
+                  onCommit={() => onMarkContacted(patient.patient_id, reason || undefined)}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/30 transition-all flex items-center space-x-1.5 disabled:opacity-50"
+                  icon={actionInFlight ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  label="Mark as Contacted"
+                  title="Mark as contacted"
+                />
+              </div>
             </div>
           ) : (
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-xs flex-wrap gap-2">
               <span className="flex items-center space-x-1.5 font-semibold text-slate-600 dark:text-slate-300">
                 {isContacted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                 {isClosed && <XCircle className="w-4 h-4 text-slate-400" />}
-                <span>This case is already marked "{patient.contact_status}"</span>
+                {isSnoozed && <Clock className="w-4 h-4 text-purple-500" />}
+                <span>This case is marked "{patient.contact_status}"</span>
               </span>
-              <button
-                onClick={onClose}
-                className="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-dark-850 hover:bg-slate-300 dark:hover:bg-dark-800 text-slate-700 dark:text-slate-300 font-semibold transition-colors"
-              >
-                Close Drawer
-              </button>
+              <div className="flex items-center space-x-2">
+                {canReactivate && (
+                  <ActionButton
+                    actionKey="reactivate"
+                    onCommit={() => onReactivate(patient.patient_id)}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold border transition-colors flex items-center space-x-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-300 dark:bg-dark-850 dark:hover:bg-blue-950/60 dark:text-blue-300 dark:border-blue-500/30"
+                    icon={<RotateCcw className="w-3.5 h-3.5" />}
+                    label="Reactivate"
+                    title="Undo — move back to Pending Contact"
+                  />
+                )}
+                <button
+                  onClick={onClose}
+                  className="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-dark-850 hover:bg-slate-300 dark:hover:bg-dark-800 text-slate-700 dark:text-slate-300 font-semibold transition-colors"
+                >
+                  Close Drawer
+                </button>
+              </div>
             </div>
           )}
         </div>

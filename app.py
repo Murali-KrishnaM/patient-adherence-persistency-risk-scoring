@@ -6,15 +6,17 @@ Run locally:
 
 Endpoints (all JSON):
     GET  /api/stats
+    GET  /api/batches-available
     GET  /api/queue?tier=High&limit=50
     GET  /api/patient/<patient_id>
     POST /api/patient/<patient_id>/contact
     POST /api/patient/<patient_id>/close        body: {"reason": "..."}  (optional)
     POST /api/patient/<patient_id>/snooze
+    POST /api/patient/<patient_id>/reset         -- reverts back to needs_contact
     POST /api/simulate-next-batch
 """
 from dotenv import load_dotenv
-load_dotenv()  # Added to ensure credentials are read if run directly
+load_dotenv()
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -24,14 +26,10 @@ import etl
 
 app = Flask(__name__)
 
-
-# for staging/prod as needed). Avoid a bare CORS(app) since this API
-# returns PII on /api/patient/<id>.
-# Allow both Vite (5173) and standard React/Next.js (3000) origins
 CORS(
     app,
     resources={r"/api/*": {"origins": [
-        "http://localhost:5173", 
+        "http://localhost:5173",
         "http://localhost:3000"
     ]}},
     supports_credentials=True,
@@ -61,12 +59,48 @@ def stats():
     })
 
 
+@app.route("/api/batches-available")
+def batches_available():
+    """
+    Tells the frontend exactly how many simulated batches exist on disk
+    and whether there's a next one to load — so "New Analysis" can grey
+    itself out instead of erroring when the last batch is reached.
+    """
+    sim = query_one("SELECT current_batch_number FROM ops.sim_state WHERE id = 1")
+    current = sim["current_batch_number"] if sim else 0
+
+    total = 0
+    n = 1
+    while etl.batch_file_for(n).exists():
+        total += 1
+        n += 1
+
+    return jsonify({
+        "current_batch": current,
+        "total_batches": total,
+        "has_more": etl.has_more_batches(current),
+    })
+
+
 @app.route("/api/queue")
 def queue():
     tier = request.args.get("tier")  # optional filter: High / Medium / Low
     limit = int(request.args.get("limit", 50))
 
-    where = "ps.status IN ('needs_contact', 'snoozed')"
+    # Only show patients last scored in the CURRENT batch. This is what
+    # makes "New Analysis" feel like a new day: patients who were part of
+    # a prior batch (already handled last time, contacted or not) drop
+    # off automatically once a batch that doesn't include them loads.
+    # Closed cases are always excluded regardless of batch.
+    where = """
+        rs.batch_id = (
+            SELECT sb.batch_id
+            FROM ops.sim_batches sb
+            JOIN ops.sim_state ss ON ss.current_batch_number = sb.batch_number
+            WHERE ss.id = 1
+        )
+        AND ps.status != 'case_closed'
+    """
     params = []
     if tier:
         where += " AND rs.risk_tier = %s"
@@ -96,10 +130,6 @@ def queue():
 
 @app.route("/api/patient/<patient_id>")
 def patient_detail(patient_id):
-    """
-    Full detail view -- this is the ONLY endpoint that joins clinical and
-    pii schemas, and only for a single patient a rep is about to contact.
-    """
     row = query_one(
         """
         SELECT
@@ -126,10 +156,19 @@ def patient_detail(patient_id):
 
 def _update_status(patient_id, status, notes=None):
     row = query_one(
-        "SELECT patient_id FROM ops.patient_status WHERE patient_id = %s", (patient_id,)
+        "SELECT patient_id, status FROM ops.patient_status WHERE patient_id = %s", (patient_id,)
     )
     if row is None:
         return jsonify({"error": "patient not found or not yet scored"}), 404
+
+    old_status = row["status"]
+
+    # Which batch panel this patient currently belongs to -- logged so
+    # Batch History can show "what happened while batch N was active"
+    batch_row = query_one(
+        "SELECT batch_id FROM clinical.risk_scores WHERE patient_id = %s", (patient_id,)
+    )
+    batch_id = batch_row["batch_id"] if batch_row else None
 
     query(
         """
@@ -140,7 +179,81 @@ def _update_status(patient_id, status, notes=None):
         (status, notes, patient_id),
         fetch=False,
     )
+
+    query(
+        """
+        INSERT INTO ops.patient_status_history (patient_id, batch_id, old_status, new_status, notes)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (patient_id, batch_id, old_status, status, notes),
+        fetch=False,
+    )
+
     return jsonify({"patient_id": patient_id, "status": status})
+
+
+@app.route("/api/batches")
+def list_batches():
+    """
+    One row per simulated batch, with a live breakdown of what happened
+    to the patients in it. Powers the Batch History tab's batch picker.
+    """
+    rows = query(
+        """
+        SELECT
+            sb.batch_number, sb.patient_count, sb.event_count, sb.loaded_at,
+            COUNT(*) FILTER (WHERE ps.status = 'needs_contact') AS pending_count,
+            COUNT(*) FILTER (WHERE ps.status = 'contacted') AS contacted_count,
+            COUNT(*) FILTER (WHERE ps.status = 'snoozed') AS snoozed_count,
+            COUNT(*) FILTER (WHERE ps.status = 'case_closed') AS closed_count
+        FROM ops.sim_batches sb
+        LEFT JOIN clinical.risk_scores rs ON rs.batch_id = sb.batch_id
+        LEFT JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id
+        GROUP BY sb.batch_number, sb.patient_count, sb.event_count, sb.loaded_at
+        ORDER BY sb.batch_number DESC
+        """
+    )
+    return jsonify(rows)
+
+
+@app.route("/api/batch/<int:batch_number>/patients")
+def batch_patients(batch_number):
+    """
+    All patients from a specific past (or current) batch, with their
+    latest status -- this is what makes a "vanished" patient findable
+    again after their batch is superseded.
+    """
+    rows = query(
+        f"""
+        SELECT
+            p.patient_id, p.age,
+            rs.risk_probability, rs.risk_tier,
+            ps.status, ps.last_action_at
+        FROM ops.sim_batches sb
+        JOIN clinical.risk_scores rs ON rs.batch_id = sb.batch_id
+        JOIN clinical.dim_patient_clinical p ON p.patient_id = rs.patient_id
+        LEFT JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id
+        WHERE sb.batch_number = %s
+        ORDER BY {TIER_RANK_SQL} ASC, rs.risk_probability DESC
+        """,
+        (batch_number,),
+    )
+    return jsonify(rows)
+
+
+@app.route("/api/patient/<patient_id>/history")
+def patient_history(patient_id):
+    """Full audit trail for one patient -- every status change, oldest last."""
+    rows = query(
+        """
+        SELECT old_status, new_status, notes, action_at, batch_id
+        FROM ops.patient_status_history
+        WHERE patient_id = %s
+        ORDER BY action_at DESC
+        """,
+        (patient_id,),
+    )
+    return jsonify(rows)
 
 
 @app.route("/api/patient/<patient_id>/contact", methods=["POST"])
@@ -158,6 +271,16 @@ def mark_closed(patient_id):
 @app.route("/api/patient/<patient_id>/snooze", methods=["POST"])
 def mark_snoozed(patient_id):
     return _update_status(patient_id, "snoozed")
+
+
+@app.route("/api/patient/<patient_id>/reset", methods=["POST"])
+def mark_reset(patient_id):
+    """
+    Reverts a patient back to 'needs_contact'. Undoes an accidental
+    Snooze/Contact/Close click, or lets a rep freely re-open a case
+    that's still part of the current batch.
+    """
+    return _update_status(patient_id, "needs_contact")
 
 
 @app.route("/api/simulate-next-batch", methods=["POST"])

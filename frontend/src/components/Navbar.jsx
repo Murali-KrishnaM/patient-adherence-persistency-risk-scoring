@@ -6,9 +6,11 @@ export default function Navbar({
   onOpenSettings,
   onNewAnalysis,
   themeMode,
-  onToggleTheme
+  onToggleTheme,
+  batchStatus,
 }) {
   const isLight = themeMode === 'light';
+  const hasMore = batchStatus ? batchStatus.has_more : true;
 
   return (
     <header className={`sticky top-0 z-40 backdrop-blur-md border-b transition-colors duration-300 ${
@@ -99,15 +101,16 @@ export default function Navbar({
 
           <button
             onClick={onNewAnalysis}
-            className={`px-3.5 py-2 rounded-xl border transition-all flex items-center space-x-1.5 text-xs font-bold shadow-sm ${
+            disabled={!hasMore}
+            className={`px-3.5 py-2 rounded-xl border transition-all flex items-center space-x-1.5 text-xs font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
               isLight
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
                 : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500/40 shadow-emerald-600/20'
             }`}
-            title="Run New Analysis (simulates next data batch)"
+            title={hasMore ? 'Run New Analysis (simulates next data batch)' : 'All simulated batches loaded'}
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>New Analysis</span>
+            <span>{hasMore ? 'New Analysis' : 'All Batches Loaded'}</span>
           </button>
         </div>
       </div>

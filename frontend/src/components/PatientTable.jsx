@@ -1,34 +1,83 @@
 import React, { useState, useMemo } from 'react';
 import {
   Search, ArrowUpDown, ChevronRight, Phone, Mail, Clock,
-  Download, CheckCircle2, AlertCircle, PhoneCall
+  Download, CheckCircle2, AlertCircle, PhoneCall, RotateCcw
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
+import { getSyntheticIdentity } from '../utils/syntheticIdentity';
+
+// Small helper: renders an action button that requires two clicks to
+// actually fire. First click turns it into a "Confirm?" state for a few
+// seconds; a second click within that window commits the action. This
+// exists specifically so an accidental single click on Snooze/Contacted
+// can't silently change a patient's status.
+function ConfirmButton({ pendingKey, activeConfirmKey, onArm, onCommit, className, icon, label, confirmLabel, title }) {
+  const isArmed = activeConfirmKey === pendingKey;
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (isArmed) {
+          onCommit();
+        } else {
+          onArm(pendingKey);
+        }
+      }}
+      className={isArmed ? 'px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 border bg-red-600 hover:bg-red-700 text-white border-red-600 shadow-sm' : className}
+      title={isArmed ? 'Click again to confirm' : title}
+    >
+      {isArmed ? (
+        <span>Confirm?</span>
+      ) : (
+        <>
+          {icon}
+          <span>{label}</span>
+        </>
+      )}
+    </button>
+  );
+}
 
 export default function PatientTable({
   patients,
   onSelectPatient,
-  onOpenEmailModal,
   onMarkContacted,
   onSnoozePatient,
+  onReactivate,
+  onSendEmail,
   loading,
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('risk_score');
   const [sortOrder, setSortOrder] = useState('desc');
   const [hoveredRiskPatient, setHoveredRiskPatient] = useState(null);
+  const [armedAction, setArmedAction] = useState(null); // `${patientId}:${action}` or null
+
+  // Auto-disarm a confirm button after 3s so it doesn't stay "hot"
+  const armAction = (key) => {
+    setArmedAction(key);
+    setTimeout(() => {
+      setArmedAction((current) => (current === key ? null : current));
+    }, 3000);
+  };
+
+  const enriched = useMemo(() => {
+    return patients.map((p) => ({ ...p, _identity: getSyntheticIdentity(p.patient_id) }));
+  }, [patients]);
 
   const filteredPatients = useMemo(() => {
-    return patients.filter(p => {
+    return enriched.filter(p => {
       if (!searchTerm) return true;
       const term = searchTerm.toLowerCase();
       const conditions = getConditionTags(p).join(' ').toLowerCase();
       return (
         p.patient_id.toLowerCase().includes(term) ||
-        (p.patient_name || '').toLowerCase().includes(term) ||
-        (p.contact_number && p.contact_number.toLowerCase().includes(term)) ||
-        (p.email && p.email.toLowerCase().includes(term)) ||
+        p._identity.name.toLowerCase().includes(term) ||
+        p._identity.phone.toLowerCase().includes(term) ||
+        p._identity.email.toLowerCase().includes(term) ||
         conditions.includes(term)
       );
     }).sort((a, b) => {
@@ -41,7 +90,7 @@ export default function PatientTable({
       if (sortOrder === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [patients, searchTerm, sortField, sortOrder]);
+  }, [enriched, searchTerm, sortField, sortOrder]);
 
   const toggleSort = (field) => {
     if (sortField === field) {
@@ -55,10 +104,10 @@ export default function PatientTable({
   const exportCSV = () => {
     const exportData = filteredPatients.map(p => ({
       "Patient ID": p.patient_id,
-      "Name": p.patient_name,
+      "Name (synthetic)": p._identity.name,
       "Age": p.age,
-      "Contact Number": p.contact_number || 'Not on file',
-      "Email": p.email || 'Not on file',
+      "Phone (synthetic)": p._identity.phone,
+      "Email (synthetic)": p._identity.email,
       "Contact Status": p.contact_status,
       "Flagged Conditions": getConditionTags(p).join('; ') || 'None flagged',
       "Risk Score (%)": p.risk_score,
@@ -153,10 +202,12 @@ export default function PatientTable({
                   const tier = getRiskTierMeta(patient.risk_tier);
                   const reasons = getReasons(patient);
                   const conditions = getConditionTags(patient);
+                  const { name, phone, email } = patient._identity;
                   const isContacted = patient.contact_status === 'Contacted';
                   const isSnoozed = patient.contact_status === 'Snoozed';
                   const isClosed = patient.contact_status === 'Closed';
-                  const isActionable = !isContacted && !isClosed;
+                  const isActionable = !isContacted && !isClosed && !isSnoozed;
+                  const canReactivate = isContacted || isSnoozed || isClosed;
 
                   return (
                     <tr
@@ -173,11 +224,11 @@ export default function PatientTable({
                             tier.isLow ? 'bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/30' :
                             'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-500/30'
                           }`}>
-                            {patient.patient_name ? patient.patient_name.charAt(0) : 'P'}
+                            {name.charAt(0)}
                           </div>
                           <div>
                             <div className="font-semibold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                              {patient.patient_name}
+                              {name}
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                               ID: {patient.patient_id} • Age {patient.age ?? 'N/A'}
@@ -186,30 +237,25 @@ export default function PatientTable({
                         </div>
                       </td>
 
-                      {/* 2. Contact (phone + email if on file) */}
+                      {/* 2. Contact (synthetic phone/email) */}
                       <td className="py-3.5 px-4 font-mono text-[11px]">
-                        {patient.contact_number ? (
-                          <div className="flex items-center space-x-1.5 text-slate-700 dark:text-slate-300 mb-1">
-                            <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                            <span>{patient.contact_number}</span>
-                          </div>
-                        ) : null}
-                        {patient.email ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (onOpenEmailModal) onOpenEmailModal(patient);
-                            }}
-                            className="flex items-center space-x-1.5 text-emerald-700 dark:text-emerald-400 hover:underline"
-                            title="Send automated email reminder"
-                          >
-                            <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span className="truncate max-w-[130px]">{patient.email}</span>
-                          </button>
-                        ) : (
-                          <span className="text-slate-400 dark:text-slate-500">Open detail for contact info</span>
-                        )}
+                        <div className="flex items-center space-x-1.5 text-slate-700 dark:text-slate-300 mb-1">
+                          <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                          <span>{phone}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onSendEmail) onSendEmail(patient.patient_id, email);
+                          }}
+                          disabled={!isActionable}
+                          className="flex items-center space-x-1.5 text-emerald-700 dark:text-emerald-400 hover:underline disabled:text-slate-400 disabled:no-underline disabled:cursor-not-allowed"
+                          title={isActionable ? 'Send automated email reminder & mark contacted' : 'No action needed — already handled'}
+                        >
+                          <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="truncate max-w-[130px]">{email}</span>
+                        </button>
                       </td>
 
                       {/* 3. Risk Status (with real reasons on hover) */}
@@ -271,7 +317,7 @@ export default function PatientTable({
                         )}
                       </td>
 
-                      {/* 4. Contact Status (read-only, driven by real DB status) */}
+                      {/* 4. Contact Status */}
                       <td className="py-3.5 px-4 text-center">
                         <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border inline-flex items-center space-x-1 ${
                           isSnoozed
@@ -294,31 +340,41 @@ export default function PatientTable({
                         <div className="flex items-center justify-center space-x-1">
                           {isActionable && (
                             <>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onSnoozePatient) onSnoozePatient(patient.patient_id);
-                                }}
+                              <ConfirmButton
+                                pendingKey={`${patient.patient_id}:snooze`}
+                                activeConfirmKey={armedAction}
+                                onArm={armAction}
+                                onCommit={() => { setArmedAction(null); onSnoozePatient(patient.patient_id); }}
                                 className="px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 border bg-slate-100 hover:bg-purple-100 text-slate-700 hover:text-purple-800 border-slate-200 dark:bg-dark-850 dark:hover:bg-purple-950/60 dark:text-slate-300 dark:hover:text-purple-300 dark:border-emerald-500/20"
+                                icon={<Clock className="w-3 h-3 text-purple-500" />}
+                                label="Snooze"
                                 title="Patient unreachable? Snooze this reminder"
-                              >
-                                <Clock className="w-3 h-3 text-purple-500" />
-                                <span>Snooze</span>
-                              </button>
+                              />
 
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (onMarkContacted) onMarkContacted(patient.patient_id);
-                                }}
+                              <ConfirmButton
+                                pendingKey={`${patient.patient_id}:contact`}
+                                activeConfirmKey={armedAction}
+                                onArm={armAction}
+                                onCommit={() => { setArmedAction(null); onMarkContacted(patient.patient_id); }}
                                 className="p-1.5 rounded-lg text-xs font-medium transition-all bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                                icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                                label=""
                                 title="Mark as contacted"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                              </button>
+                              />
                             </>
+                          )}
+
+                          {canReactivate && (
+                            <ConfirmButton
+                              pendingKey={`${patient.patient_id}:reactivate`}
+                              activeConfirmKey={armedAction}
+                              onArm={armAction}
+                              onCommit={() => { setArmedAction(null); onReactivate(patient.patient_id); }}
+                              className="px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 border bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 border-slate-200 dark:bg-dark-850 dark:hover:bg-blue-950/60 dark:text-slate-300 dark:hover:text-blue-300 dark:border-emerald-500/20"
+                              icon={<RotateCcw className="w-3 h-3 text-blue-500" />}
+                              label="Reactivate"
+                              title="Undo — move this patient back to Pending Contact"
+                            />
                           )}
 
                           <button
@@ -342,7 +398,7 @@ export default function PatientTable({
         <div className="bg-slate-50 dark:bg-dark-950/90 px-4 py-2.5 border-t border-slate-200 dark:border-emerald-500/10 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <span>Showing {filteredPatients.length} datawarehouse records</span>
           <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
-            Tip: Hover Risk Status for model factors • Click a row for full profile
+            Click Snooze/✓ twice to confirm • Hover Risk Status for model factors
           </span>
         </div>
       </div>
