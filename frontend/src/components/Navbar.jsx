@@ -110,7 +110,7 @@ export default function Navbar({
             title={hasMore ? 'Run New Analysis (simulates next data batch)' : 'All simulated batches loaded'}
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>{hasMore ? 'New Analysis' : 'All Batches Loaded'}</span>
+            <span>{hasMore ? 'Stimulate Next Day' : 'All Batches Loaded'}</span>
           </button>
         </div>
       </div>

@@ -87,20 +87,11 @@ def queue():
     tier = request.args.get("tier")  # optional filter: High / Medium / Low
     limit = int(request.args.get("limit", 50))
 
-    # Only show patients last scored in the CURRENT batch. This is what
-    # makes "New Analysis" feel like a new day: patients who were part of
-    # a prior batch (already handled last time, contacted or not) drop
-    # off automatically once a batch that doesn't include them loads.
-    # Closed cases are always excluded regardless of batch.
-    where = """
-        rs.batch_id = (
-            SELECT sb.batch_id
-            FROM ops.sim_batches sb
-            JOIN ops.sim_state ss ON ss.current_batch_number = sb.batch_number
-            WHERE ss.id = 1
-        )
-        AND ps.status != 'case_closed'
-    """
+    # Show every patient still awaiting action, from ANY batch. Only
+    # contacted and case_closed patients drop off the queue. Snoozed
+    # patients stay visible (with a Snoozed badge) and get automatically
+    # reset to needs_contact when the next batch is simulated.
+    where = "ps.status IN ('needs_contact', 'snoozed', 'contacted')"
     params = []
     if tier:
         where += " AND rs.risk_tier = %s"

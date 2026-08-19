@@ -86,6 +86,21 @@ export async function getPatientHistory(patientId) {
   return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/history`));
 }
 
+// True counts across the WHOLE warehouse (not just the capped table view).
+// /api/stats already groups by risk_tier + status, so this needs no new
+// backend endpoint -- just filter/sum client-side.
+export async function getActiveSummary() {
+  const stats = await getStats();
+  const active = stats.breakdown.filter(
+    (row) => row.status === 'needs_contact' || row.status === 'snoozed'
+  );
+  const total = active.reduce((sum, row) => sum + Number(row.n), 0);
+  const highRisk = active
+    .filter((row) => row.risk_tier === 'High')
+    .reduce((sum, row) => sum + Number(row.n), 0);
+  return { total, highRisk };
+}
+
 const STATUS_LABELS = {
   needs_contact: 'Pending Contact',
   contacted: 'Contacted',

@@ -16,6 +16,7 @@ import {
   markClosed,
   resetPatientStatus,
   getBatchStatus,
+  getActiveSummary,
 } from './services/api';
 import { CheckCircle2, ShieldCheck, RefreshCw, Activity } from 'lucide-react';
 
@@ -34,11 +35,13 @@ export default function App() {
   const [themeMode, setThemeMode] = useState('dark');
   const [showSplash, setShowSplash] = useState(true);
   const [batchStatus, setBatchStatus] = useState({ current_batch: 0, total_batches: 0, has_more: true });
+  const [activeSummary, setActiveSummary] = useState({ total: 0, highRisk: 0 });
 
   useEffect(() => {
     checkApiHealth().then(setApiStatus);
     loadQueue();
     refreshBatchStatus();
+    refreshActiveSummary();
   }, []);
 
   const refreshBatchStatus = async () => {
@@ -46,8 +49,19 @@ export default function App() {
       const status = await getBatchStatus();
       setBatchStatus(status);
     } catch (err) {
-      // Non-fatal — worst case the button just doesn't show a live count.
       console.error('Failed to load batch status:', err.message);
+    }
+  };
+
+  // True total/high-risk counts across the whole warehouse -- independent
+  // of the 100-row cap on the visible table, so the stat cards stay
+  // accurate even once accumulated pending patients exceed the cap.
+  const refreshActiveSummary = async () => {
+    try {
+      const summary = await getActiveSummary();
+      setActiveSummary(summary);
+    } catch (err) {
+      console.error('Failed to load active summary:', err.message);
     }
   };
 
@@ -56,8 +70,6 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Loads the queue as it currently stands. Does NOT advance the
-  // simulated batch — safe to call any time (mount, after an action).
   const loadQueue = async () => {
     setIsProcessing(true);
     try {
@@ -71,7 +83,6 @@ export default function App() {
     }
   };
 
-  // "New Analysis" — advances to the next simulated batch, then reloads.
   const handleNewAnalysis = async () => {
     if (!batchStatus.has_more) {
       triggerToast('All simulated batches have been loaded — nothing left to advance to.');
@@ -91,6 +102,7 @@ export default function App() {
     } finally {
       setIsProcessing(false);
       refreshBatchStatus();
+      refreshActiveSummary();
     }
   };
 
@@ -123,14 +135,13 @@ export default function App() {
     setPatientDetail(null);
   };
 
-  // Generic wrapper for status-changing actions: call the real backend
-  // endpoint, reload the queue from the database, close the drawer.
   const runAction = async (actionFn, patientId, successMsg) => {
     setActionInFlight(true);
     try {
       await actionFn(patientId);
       triggerToast(successMsg);
       await loadQueue();
+      await refreshActiveSummary();
       closeDetail();
     } catch (err) {
       triggerToast(`Action failed: ${err.message}`);
@@ -148,12 +159,9 @@ export default function App() {
   const handleCloseCase = (patientId, reason) =>
     runAction((id) => markClosed(id, reason), patientId, 'Case closed');
 
-  // Undo — moves a Snoozed/Contacted/Closed patient back to Pending.
   const handleReactivate = (patientId) =>
     runAction(resetPatientStatus, patientId, 'Patient reactivated — back in pending queue');
 
-  // "Send automated email" — no real email is sent (simulated data), it
-  // just marks the patient as contacted, per how this demo is meant to work.
   const handleSendEmail = (patientId, recipientEmail) => {
     runAction(
       (id) => markContacted(id, 'Automated email reminder sent'),
@@ -199,7 +207,7 @@ export default function App() {
             <div className="flex items-center space-x-2">
               <span className={`w-2.5 h-2.5 rounded-full bg-emerald-500 ${isProcessing ? 'animate-pulse' : ''}`}></span>
               <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>Datawarehouse Ingestion Active</span>
-              <span className={`${isLight ? 'text-slate-500' : 'text-slate-400'} font-mono`}>| {patients.length} Patient Accounts Scored</span>
+              <span className={`${isLight ? 'text-slate-500' : 'text-slate-400'} font-mono`}>| {activeSummary.total} Patient Accounts Scored</span>
             </div>
 
             <div className={`flex items-center space-x-1 p-1 rounded-xl border shadow-sm ${
@@ -250,15 +258,15 @@ export default function App() {
                 className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 disabled:cursor-not-allowed ${
                   isLight ? 'text-emerald-700 hover:text-emerald-900' : 'text-emerald-400 hover:text-emerald-300'
                 }`}
-                title={batchStatus.has_more ? 'Run New Analysis' : 'All simulated batches loaded'}
+                title={batchStatus.has_more ? 'Simulate Next Day' : 'All simulated batches loaded'}
               >
                 <RefreshCw className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
-                <span>{batchStatus.has_more ? 'New Analysis' : 'All Batches Loaded'}</span>
+                <span>{batchStatus.has_more ? 'Simulate Next Day' : 'All Batches Loaded'}</span>
               </button>
             </div>
           </div>
 
-          <MetricsOverview patients={patients} />
+          <MetricsOverview activeSummary={activeSummary} />
 
           {activeTab === 'patients' && (
             <div className="space-y-4">

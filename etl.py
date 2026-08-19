@@ -128,6 +128,29 @@ def load_batch(batch_number: int) -> dict:
             )
         conn.commit()
 
+        # Auto-unsnooze: reappear as needs_contact once a new day loads.
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ops.patient_status
+                SET status = 'needs_contact', updated_at = now()
+                WHERE status = 'snoozed'
+                """
+            )
+
+        # Archive contacted patients: they've stayed visible with a
+        # "Contacted" badge since being marked, and now that a new batch
+        # is loading, they're done -- drop them from the active queue.
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ops.patient_status
+                SET status = 'contacted_archived', updated_at = now()
+                WHERE status = 'contacted'
+                """
+            )
+        conn.commit()
+
         # ---- Feature computation + scoring, only for this batch's patients ----
         with conn.cursor() as cur:
             cur.execute(FEATURES_SQL, {"ids": patient_ids})
