@@ -1,19 +1,19 @@
 """
-Run this ONCE, offline, before the demo. It does NOT touch Postgres.
+Run this ONCE, offline, before running the platform. It does NOT touch Postgres.
 
 It reads your real Beneficiary Summary + PDE CSVs (same files used in the
 notebook), replicates the same cleaning steps used in training (chronic
 condition 1/2 -> 1/0, AGE, full-year Part D filter, drop deceased), picks
-a demo-sized pool of patients, and splits them into "batch" CSV files that
-the live demo reveals one at a time via the Simulate Next Day button.
+a simulated pool of patients, and splits them into "batch" CSV files that
+the platform ingests one at a time via the Simulate Next Day button.
 
-It also generates clearly-fake PII (name/phone/email) for the demo pool --
+It also generates clearly-fake PII (name/phone/email) for the simulated pool --
 these are NOT real people, this is a synthetic public-use dataset with no
-real patient identity attached, so PII is fabricated for demo purposes only.
+real patient identity attached, so PII is fabricated for simulation purposes only.
 
 Output (all under backend/model_artifacts/):
-    patients_clinical.csv      -- one row per demo patient, model-safe fields
-    patients_pii.csv           -- one row per demo patient, contact fields
+    patients_clinical.csv      -- one row per simulated patient, model-safe fields
+    patients_pii.csv           -- one row per simulated patient, contact fields
     batches/batch_0001.csv ... -- prescription events, revealed incrementally
     true_labels.csv            -- (for our own reference only, NOT loaded to DB)
 """

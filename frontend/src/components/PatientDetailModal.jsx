@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { X, ShieldAlert, Send, CheckCircle2, Activity, Clock, XCircle, Loader2, RotateCcw, Phone, Mail } from 'lucide-react';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
-import { getSyntheticIdentity } from '../utils/syntheticIdentity';
+
+import { updatePatientPii, addPatientNote, getPatientHistory } from '../services/api';
 
 export default function PatientDetailModal({
+  currentUser,
   patient,
   loading,
   actionInFlight,
   onClose,
+  onPatientUpdated,
   onMarkContacted,
   onSnoozePatient,
   onCloseCase,
@@ -15,13 +18,69 @@ export default function PatientDetailModal({
 }) {
   const [reason, setReason] = useState('');
   const [armedAction, setArmedAction] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  React.useEffect(() => {
+    if (patient?.patient_id) {
+      loadHistory();
+    }
+  }, [patient?.patient_id]);
+
+  const loadHistory = async () => {
+    try {
+      const h = await getPatientHistory(patient.patient_id);
+      setHistory(h || []);
+    } catch (e) {
+      console.error("Failed to load history:", e);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!reason.trim()) return;
+    try {
+      setIsSavingNote(true);
+      await addPatientNote(patient.patient_id, reason);
+      setReason('');
+      await loadHistory();
+      if (onPatientUpdated) onPatientUpdated();
+    } catch (e) {
+      alert("Failed to save note: " + e.message);
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
 
   if (!patient) return null;
 
   const tier = getRiskTierMeta(patient.risk_tier);
   const reasons = getReasons(patient);
   const conditions = getConditionTags(patient);
-  const { name, phone, email } = getSyntheticIdentity(patient.patient_id);
+  const name = patient.patient_name || 'Unknown Patient';
+  const phone = patient.contact_number || '';
+  const email = patient.email || '';
+  const preferred_contact = patient.preferred_contact || 'phone';
+
+  const [isEditingPii, setIsEditingPii] = useState(false);
+  const [piiForm, setPiiForm] = useState({ full_name: name, phone_number: phone, email: email, preferred_contact: preferred_contact });
+  const [isSavingPii, setIsSavingPii] = useState(false);
+
+  const handleSavePii = async () => {
+    try {
+      setIsSavingPii(true);
+      await updatePatientPii(patient.patient_id, piiForm);
+      patient.patient_name = piiForm.full_name;
+      patient.contact_number = piiForm.phone_number;
+      patient.email = piiForm.email;
+      patient.preferred_contact = piiForm.preferred_contact;
+      setIsEditingPii(false);
+      if (onPatientUpdated) onPatientUpdated();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setIsSavingPii(false);
+    }
+  };
   const isContacted = patient.contact_status === 'Contacted';
   const isSnoozed = patient.contact_status === 'Snoozed';
   const isClosed = patient.contact_status === 'Closed';
@@ -68,15 +127,65 @@ export default function PatientDetailModal({
               {name.charAt(0)}
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                {name}
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center flex-wrap gap-x-2">
-                <span>ID: {patient.patient_id}</span>
-                <span>• {patient.age ?? 'N/A'} yrs</span>
-                <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
-                <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
-              </p>
+              {isEditingPii ? (
+                <div className="mt-2 space-y-2">
+                  <input
+                    type="text"
+                    value={piiForm.full_name}
+                    onChange={e => setPiiForm({...piiForm, full_name: e.target.value})}
+                    className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                    placeholder="Full Name"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={piiForm.phone_number}
+                      onChange={e => setPiiForm({...piiForm, phone_number: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Phone"
+                    />
+                    <input
+                      type="email"
+                      value={piiForm.email}
+                      onChange={e => setPiiForm({...piiForm, email: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Email"
+                    />
+                  </div>
+                  <select
+                    value={piiForm.preferred_contact}
+                    onChange={e => setPiiForm({...piiForm, preferred_contact: e.target.value})}
+                    className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                  >
+                    <option value="phone">Preferred: Phone</option>
+                    <option value="email">Preferred: Email</option>
+                  </select>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={handleSavePii} disabled={isSavingPii} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold disabled:opacity-50">
+                      {isSavingPii ? 'Saving...' : 'Save'}
+                    </button>
+                    <button onClick={() => setIsEditingPii(false)} className="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-dark-800 dark:hover:bg-dark-700 text-slate-700 dark:text-slate-300 rounded text-xs font-bold">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
+                    <span>{name}</span>
+                    {currentUser?.role === 'admin' && (
+                      <button onClick={() => setIsEditingPii(true)} className="text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-semibold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 transition-colors">Edit</button>
+                    )}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center flex-wrap gap-x-2 mt-1">
+                    <span>ID: {patient.patient_id}</span>
+                    <span>• {patient.age ?? 'N/A'} yrs</span>
+                    <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
+                    <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-dark-800 text-[10px]">Prefers: {preferred_contact}</span>
+                  </p>
+                </>
+              )}
             </div>
           </div>
 
@@ -169,21 +278,49 @@ export default function PatientDetailModal({
             </div>
           </div>
 
-          {/* 4. Notes */}
-          {isActionable && (
-            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-emerald-500/10">
-              <label className="text-xs font-mono uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold">
-                Notes (optional)
-              </label>
-              <textarea
-                rows={2}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Add a note for this contact or closure..."
-                className="w-full rounded-xl p-3 text-xs border outline-none transition-colors bg-slate-50 dark:bg-dark-950 border-slate-300 dark:border-emerald-500/30 text-slate-800 dark:text-white focus:border-emerald-500"
-              />
-            </div>
-          )}
+          {/* 4. Notes & History */}
+          <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-emerald-500/10">
+            <h4 className="text-xs font-mono uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold flex items-center space-x-1.5">
+              <span>Patient History & Notes</span>
+            </h4>
+            
+            {history.length > 0 && (
+              <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
+                {history.map((entry, idx) => (
+                  <div key={idx} className="p-2.5 rounded-lg bg-slate-50 dark:bg-dark-900 border border-slate-200 dark:border-emerald-500/10 flex flex-col space-y-1">
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 dark:text-slate-400">
+                      <span className="font-semibold uppercase">{entry.new_status !== entry.old_status ? `${entry.old_status} ➔ ${entry.new_status}` : entry.new_status}</span>
+                      <span>{new Date(entry.action_at).toLocaleString()}</span>
+                    </div>
+                    {entry.notes && (
+                      <p className="text-xs text-slate-700 dark:text-slate-300 italic whitespace-pre-wrap">{entry.notes}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isActionable && (
+              <div className="space-y-2">
+                <textarea
+                  rows={2}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Add a new note..."
+                  className="w-full rounded-xl p-3 text-xs border outline-none transition-colors bg-slate-50 dark:bg-dark-950 border-slate-300 dark:border-emerald-500/30 text-slate-800 dark:text-white focus:border-emerald-500"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveNote}
+                    disabled={isSavingNote || !reason.trim()}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-dark-800 hover:bg-slate-300 dark:hover:bg-dark-700 text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  >
+                    {isSavingNote ? 'Saving...' : 'Save Note'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
         </div>
 
@@ -193,7 +330,12 @@ export default function PatientDetailModal({
             <div className="flex flex-wrap items-center gap-2">
               <ActionButton
                 actionKey="snooze"
-                onCommit={() => onSnoozePatient(patient.patient_id)}
+                onCommit={() => {
+                  const days = window.prompt("Remind later after how many simulated days?", "5");
+                  if (days && !isNaN(days)) {
+                    onSnoozePatient(patient.patient_id, parseInt(days, 10));
+                  }
+                }}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center space-x-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:bg-dark-850 dark:hover:bg-dark-800 dark:text-purple-300 dark:border-purple-500/30 disabled:opacity-50"
                 icon={<Clock className="w-3.5 h-3.5" />}
                 label="Snooze"
@@ -226,7 +368,10 @@ export default function PatientDetailModal({
                 {isContacted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                 {isClosed && <XCircle className="w-4 h-4 text-slate-400" />}
                 {isSnoozed && <Clock className="w-4 h-4 text-purple-500" />}
-                <span>This case is marked "{patient.contact_status}"</span>
+                <span>
+                  This case is marked "{patient.contact_status}"
+                  {isSnoozed && patient.snoozed_until_batch ? ` (snoozed until batch #${patient.snoozed_until_batch})` : ''}
+                </span>
               </span>
               <div className="flex items-center space-x-2">
                 {canReactivate && (

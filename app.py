@@ -1,19 +1,21 @@
 """
-Flask API for the Patient Adherence & Persistency Risk Scoring demo.
+Flask API for the Patient Adherence & Persistency Risk Scoring Platform.
 
 Run locally:
     flask --app app run --debug --port 5000
 
 Endpoints (all JSON):
+    POST /api/login                                 body: {"username": "...", "password": "..."}
+    GET  /api/me
     GET  /api/stats
     GET  /api/batches-available
     GET  /api/queue?tier=High&limit=50
     GET  /api/patient/<patient_id>
     POST /api/patient/<patient_id>/contact
-    POST /api/patient/<patient_id>/close        body: {"reason": "..."}  (optional)
+    POST /api/patient/<patient_id>/close            body: {"reason": "..."}  (optional)
     POST /api/patient/<patient_id>/snooze
-    POST /api/patient/<patient_id>/reset         -- reverts back to needs_contact
-    POST /api/simulate-next-batch
+    POST /api/patient/<patient_id>/reset             -- reverts back to needs_contact
+    POST /api/simulate-next-batch                    -- requires 'admin' role
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -23,6 +25,8 @@ from flask_cors import CORS
 
 from db import query, query_one
 import etl
+from werkzeug.security import check_password_hash
+from auth import require_auth, require_role, generate_token, get_current_user
 
 app = Flask(__name__)
 
@@ -30,7 +34,11 @@ CORS(
     app,
     resources={r"/api/*": {"origins": [
         "http://localhost:5173",
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:3004"
     ]}},
     supports_credentials=True,
 )
@@ -38,7 +46,45 @@ CORS(
 TIER_RANK_SQL = "CASE risk_tier WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END"
 
 
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password")
+    if not username or not password:
+        return jsonify({"error": "Missing credentials"}), 400
+
+    user = query_one(
+        """
+        SELECT u.id, u.username, u.password_hash, r.name as role
+        FROM auth.users u
+        JOIN auth.roles r ON u.role_id = r.id
+        WHERE u.username = %s
+        """,
+        (username,)
+    )
+
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    token = generate_token(user["id"], user["username"], user["role"])
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"]
+        }
+    })
+
+@app.route("/api/me")
+@require_auth
+def get_me():
+    return jsonify({"user": request.user})
+
+
 @app.route("/api/stats")
+@require_auth
 def stats():
     counts = query(
         """
@@ -60,6 +106,7 @@ def stats():
 
 
 @app.route("/api/batches-available")
+@require_auth
 def batches_available():
     """
     Tells the frontend exactly how many simulated batches exist on disk
@@ -83,6 +130,7 @@ def batches_available():
 
 
 @app.route("/api/queue")
+@require_auth
 def queue():
     tier = request.args.get("tier")  # optional filter: High / Medium / Low
     limit = int(request.args.get("limit", 50))
@@ -106,10 +154,16 @@ def queue():
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3,
             rs.computed_at,
-            ps.status
+            pii.full_name,
+            pii.phone_number,
+            pii.email,
+            pii.preferred_contact,
+            ps.status,
+            ps.snoozed_until_batch
         FROM clinical.risk_scores rs
         JOIN clinical.dim_patient_clinical p ON p.patient_id = rs.patient_id
         JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id
+        LEFT JOIN pii.dim_patient_pii pii ON pii.patient_id = rs.patient_id
         WHERE {where}
         ORDER BY {TIER_RANK_SQL} ASC, rs.risk_probability DESC
         LIMIT %s
@@ -120,6 +174,7 @@ def queue():
 
 
 @app.route("/api/patient/<patient_id>")
+@require_auth
 def patient_detail(patient_id):
     row = query_one(
         """
@@ -131,7 +186,7 @@ def patient_detail(patient_id):
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3, rs.computed_at,
             pii.full_name, pii.phone_number, pii.email, pii.preferred_contact,
-            ps.status, ps.notes, ps.last_action_at
+            ps.status, ps.notes, ps.last_action_at, ps.snoozed_until_batch
         FROM clinical.dim_patient_clinical p
         LEFT JOIN clinical.risk_scores rs ON rs.patient_id = p.patient_id
         LEFT JOIN pii.dim_patient_pii pii ON pii.patient_id = p.patient_id
@@ -145,7 +200,7 @@ def patient_detail(patient_id):
     return jsonify(row)
 
 
-def _update_status(patient_id, status, notes=None):
+def _update_status(patient_id, status, notes=None, snoozed_until_days=None):
     row = query_one(
         "SELECT patient_id, status FROM ops.patient_status WHERE patient_id = %s", (patient_id,)
     )
@@ -161,15 +216,30 @@ def _update_status(patient_id, status, notes=None):
     )
     batch_id = batch_row["batch_id"] if batch_row else None
 
-    query(
-        """
-        UPDATE ops.patient_status
-        SET status = %s, notes = COALESCE(%s, notes), last_action_at = now(), updated_at = now()
-        WHERE patient_id = %s
-        """,
-        (status, notes, patient_id),
-        fetch=False,
-    )
+    if status == 'snoozed' and snoozed_until_days is not None:
+        sim_row = query_one("SELECT current_batch_number FROM ops.sim_state WHERE id = 1")
+        current_batch = sim_row["current_batch_number"] if sim_row else 0
+        target_batch = current_batch + int(snoozed_until_days)
+        
+        query(
+            """
+            UPDATE ops.patient_status
+            SET status = %s, notes = COALESCE(%s, notes), snoozed_until_batch = %s, last_action_at = now(), updated_at = now()
+            WHERE patient_id = %s
+            """,
+            (status, notes, target_batch, patient_id),
+            fetch=False,
+        )
+    else:
+        query(
+            """
+            UPDATE ops.patient_status
+            SET status = %s, notes = COALESCE(%s, notes), snoozed_until_batch = NULL, last_action_at = now(), updated_at = now()
+            WHERE patient_id = %s
+            """,
+            (status, notes, patient_id),
+            fetch=False,
+        )
 
     query(
         """
@@ -184,6 +254,7 @@ def _update_status(patient_id, status, notes=None):
 
 
 @app.route("/api/batches")
+@require_role("admin")
 def list_batches():
     """
     One row per simulated batch, with a live breakdown of what happened
@@ -208,6 +279,7 @@ def list_batches():
 
 
 @app.route("/api/batch/<int:batch_number>/patients")
+@require_role("admin")
 def batch_patients(batch_number):
     """
     All patients from a specific past (or current) batch, with their
@@ -233,38 +305,82 @@ def batch_patients(batch_number):
 
 
 @app.route("/api/patient/<patient_id>/history")
+@require_auth
 def patient_history(patient_id):
     """Full audit trail for one patient -- every status change, oldest last."""
     rows = query(
         """
-        SELECT old_status, new_status, notes, action_at, batch_id
+        SELECT old_status, new_status, notes, created_at as action_at, batch_id
         FROM ops.patient_status_history
         WHERE patient_id = %s
-        ORDER BY action_at DESC
+        ORDER BY created_at DESC
         """,
         (patient_id,),
     )
     return jsonify(rows)
 
+@app.route("/api/patient/<patient_id>/notes", methods=["POST"])
+@require_auth
+def add_note(patient_id):
+    data = request.get_json(silent=True) or {}
+    notes = data.get("notes")
+    if not notes:
+        return jsonify({"error": "No notes provided"}), 400
+
+    row = query_one("SELECT status FROM ops.patient_status WHERE patient_id = %s", (patient_id,))
+    if not row:
+        return jsonify({"error": "Patient not found"}), 404
+    status = row["status"]
+
+    batch_row = query_one("SELECT batch_id FROM clinical.risk_scores WHERE patient_id = %s", (patient_id,))
+    batch_id = batch_row["batch_id"] if batch_row else None
+
+    query(
+        """
+        UPDATE ops.patient_status
+        SET notes = %s, last_action_at = now(), updated_at = now()
+        WHERE patient_id = %s
+        """,
+        (notes, patient_id),
+        fetch=False,
+    )
+
+    query(
+        """
+        INSERT INTO ops.patient_status_history (patient_id, batch_id, old_status, new_status, notes)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (patient_id, batch_id, status, status, notes),
+        fetch=False,
+    )
+
+    return jsonify({"success": True, "notes": notes})
+
 
 @app.route("/api/patient/<patient_id>/contact", methods=["POST"])
+@require_auth
 def mark_contacted(patient_id):
     notes = (request.get_json(silent=True) or {}).get("notes")
     return _update_status(patient_id, "contacted", notes)
 
 
 @app.route("/api/patient/<patient_id>/close", methods=["POST"])
+@require_auth
 def mark_closed(patient_id):
     reason = (request.get_json(silent=True) or {}).get("reason")
     return _update_status(patient_id, "case_closed", reason)
 
 
 @app.route("/api/patient/<patient_id>/snooze", methods=["POST"])
+@require_auth
 def mark_snoozed(patient_id):
-    return _update_status(patient_id, "snoozed")
+    data = request.get_json(silent=True) or {}
+    days = data.get("days")
+    return _update_status(patient_id, "snoozed", snoozed_until_days=days)
 
 
 @app.route("/api/patient/<patient_id>/reset", methods=["POST"])
+@require_auth
 def mark_reset(patient_id):
     """
     Reverts a patient back to 'needs_contact'. Undoes an accidental
@@ -274,7 +390,33 @@ def mark_reset(patient_id):
     return _update_status(patient_id, "needs_contact")
 
 
+@app.route("/api/patient/<patient_id>/pii", methods=["PUT"])
+@require_role("admin")
+def update_patient_pii(patient_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    query(
+        """
+        UPDATE pii.dim_patient_pii
+        SET full_name = %s, phone_number = %s, email = %s, preferred_contact = %s
+        WHERE patient_id = %s
+        """,
+        (
+            data.get("full_name"),
+            data.get("phone_number"),
+            data.get("email"),
+            data.get("preferred_contact"),
+            patient_id
+        ),
+        fetch=False
+    )
+    return jsonify({"success": True})
+
+
 @app.route("/api/simulate-next-batch", methods=["POST"])
+@require_auth
 def simulate_next_batch():
     from db import get_connection
     conn = get_connection()

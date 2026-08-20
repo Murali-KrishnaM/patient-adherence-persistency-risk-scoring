@@ -6,6 +6,7 @@ import PatientTable from './components/PatientTable';
 import PatientDetailModal from './components/PatientDetailModal';
 import FastApiConfigModal from './components/FastApiConfigModal';
 import SplashScreen from './components/SplashScreen';
+import Login from './components/Login';
 import {
   loadQueueData,
   processPatientData,
@@ -17,6 +18,9 @@ import {
   resetPatientStatus,
   getBatchStatus,
   getActiveSummary,
+  getMe,
+  getAuthToken,
+  setAuthToken,
 } from './services/api';
 import { CheckCircle2, ShieldCheck, RefreshCw, Activity } from 'lucide-react';
 
@@ -36,13 +40,40 @@ export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [batchStatus, setBatchStatus] = useState({ current_batch: 0, total_batches: 0, has_more: true });
   const [activeSummary, setActiveSummary] = useState({ total: 0, highRisk: 0 });
+  const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    const handleAuthFailure = () => {
+      setCurrentUser(null);
+    };
+    window.addEventListener('auth-failed', handleAuthFailure);
+    return () => window.removeEventListener('auth-failed', handleAuthFailure);
+  }, []);
+
+  useEffect(() => {
+    const initAuth = async () => {
+      if (getAuthToken()) {
+        try {
+          const user = await getMe();
+          setCurrentUser(user);
+        } catch (e) {
+          setCurrentUser(null);
+        }
+      } else {
+        setShowSplash(false);
+      }
+    };
+    initAuth();
+  }, []);
 
   useEffect(() => {
     checkApiHealth().then(setApiStatus);
-    loadQueue();
-    refreshBatchStatus();
-    refreshActiveSummary();
-  }, []);
+    if (currentUser) {
+      loadQueue();
+      refreshBatchStatus();
+      refreshActiveSummary();
+    }
+  }, [currentUser]);
 
   const refreshBatchStatus = async () => {
     try {
@@ -153,8 +184,8 @@ export default function App() {
   const handleMarkContacted = (patientId, notes) =>
     runAction((id) => markContacted(id, notes), patientId, 'Patient marked as contacted');
 
-  const handleSnoozePatient = (patientId) =>
-    runAction(markSnoozed, patientId, 'Reminder snoozed for this patient');
+  const handleSnoozePatient = (patientId, days) =>
+    runAction((id) => markSnoozed(id, days), patientId, `Reminder snoozed for ${days} day(s)`);
 
   const handleCloseCase = (patientId, reason) =>
     runAction((id) => markClosed(id, reason), patientId, 'Case closed');
@@ -170,7 +201,21 @@ export default function App() {
     );
   };
 
+  const handleLogout = () => {
+    setAuthToken(null);
+    setCurrentUser(null);
+  };
+
   const isLight = themeMode === 'light';
+
+  if (!currentUser) {
+    return (
+      <>
+        {showSplash && <SplashScreen themeMode={themeMode} onFinish={() => setShowSplash(false)} />}
+        {!showSplash && <Login onLoginSuccess={(user) => setCurrentUser(user)} themeMode={themeMode} />}
+      </>
+    );
+  }
 
   return (
     <div className={`min-h-screen ${isLight ? 'bg-slate-50 text-slate-900' : 'bg-dark-950 text-slate-100'} flex flex-col selection:bg-emerald-500 selection:text-black transition-colors duration-300`}>
@@ -251,7 +296,6 @@ export default function App() {
                   Batch {batchStatus.current_batch} of {batchStatus.total_batches}
                 </span>
               )}
-
               <button
                 onClick={handleNewAnalysis}
                 disabled={isProcessing || !batchStatus.has_more}
@@ -262,6 +306,10 @@ export default function App() {
               >
                 <RefreshCw className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
                 <span>{batchStatus.has_more ? 'Simulate Next Day' : 'All Batches Loaded'}</span>
+              </button>
+
+              <button onClick={handleLogout} className="text-xs ml-4 text-slate-500 hover:text-red-500 transition-colors font-bold">
+                Logout ({currentUser.username})
               </button>
             </div>
           </div>
@@ -308,10 +356,12 @@ export default function App() {
 
       {selectedPatientId && (
         <PatientDetailModal
+          currentUser={currentUser}
           patient={patientDetail}
           loading={detailLoading}
           actionInFlight={actionInFlight}
           onClose={closeDetail}
+          onPatientUpdated={loadQueue}
           onMarkContacted={handleMarkContacted}
           onSnoozePatient={handleSnoozePatient}
           onCloseCase={handleCloseCase}

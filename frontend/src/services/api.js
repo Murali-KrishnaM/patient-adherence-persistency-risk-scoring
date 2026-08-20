@@ -9,7 +9,23 @@ export function setApiUrl(url) {
 export const getFastApiUrl = getApiUrl;
 export const setFastApiUrl = setApiUrl;
 
+export function getAuthToken() {
+  return localStorage.getItem('medcare_auth_token');
+}
+export function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem('medcare_auth_token', token);
+  } else {
+    localStorage.removeItem('medcare_auth_token');
+  }
+}
+
 async function handle(response) {
+  if (response.status === 401) {
+    setAuthToken(null);
+    window.dispatchEvent(new Event('auth-failed'));
+    throw new Error('Unauthorized');
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -17,9 +33,37 @@ async function handle(response) {
   return response.json();
 }
 
+function getHeaders(customHeaders = {}) {
+  const token = getAuthToken();
+  const headers = { ...customHeaders };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+export async function login(username, password) {
+  const res = await fetch(`${API_BASE_URL}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await handle(res);
+  setAuthToken(data.token);
+  return data.user;
+}
+
+export async function getMe() {
+  const token = getAuthToken();
+  if (!token) throw new Error('No token');
+  const res = await fetch(`${API_BASE_URL}/api/me`, { headers: getHeaders() });
+  const data = await handle(res);
+  return data.user;
+}
+
 export async function checkApiHealth() {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/stats`);
+    const res = await fetch(`${API_BASE_URL}/api/stats`, { headers: getHeaders() });
     return res.ok ? { online: true } : { online: false, error: 'Server returned error status' };
   } catch (err) {
     return { online: false, error: err.message };
@@ -28,24 +72,24 @@ export async function checkApiHealth() {
 export const checkFastApiHealth = checkApiHealth;
 
 export async function getStats() {
-  return handle(await fetch(`${API_BASE_URL}/api/stats`));
+  return handle(await fetch(`${API_BASE_URL}/api/stats`, { headers: getHeaders() }));
 }
 
 export async function getQueue({ tier, limit = 50 } = {}) {
   const params = new URLSearchParams();
   if (tier) params.set('tier', tier);
   params.set('limit', limit);
-  return handle(await fetch(`${API_BASE_URL}/api/queue?${params}`));
+  return handle(await fetch(`${API_BASE_URL}/api/queue?${params}`, { headers: getHeaders() }));
 }
 
 export async function getPatientDetail(patientId) {
-  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}`));
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}`, { headers: getHeaders() }));
 }
 
 export async function markContacted(patientId, notes) {
   return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/contact`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ notes }),
   }));
 }
@@ -53,37 +97,57 @@ export async function markContacted(patientId, notes) {
 export async function markClosed(patientId, reason) {
   return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/close`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ reason }),
   }));
 }
 
-export async function markSnoozed(patientId) {
-  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/snooze`, { method: 'POST' }));
+export async function markSnoozed(patientId, days = null) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/snooze`, { 
+    method: 'POST', 
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ days })
+  }));
 }
 
 export async function resetPatientStatus(patientId) {
-  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/reset`, { method: 'POST' }));
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/reset`, { method: 'POST', headers: getHeaders() }));
+}
+
+export async function addPatientNote(patientId, notes) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/notes`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ notes }),
+  }));
 }
 
 export async function simulateNextBatch() {
-  return handle(await fetch(`${API_BASE_URL}/api/simulate-next-batch`, { method: 'POST' }));
+  return handle(await fetch(`${API_BASE_URL}/api/simulate-next-batch`, { method: 'POST', headers: getHeaders() }));
+}
+
+export async function updatePatientPii(patientId, data) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/pii`, {
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  }));
 }
 
 export async function getBatchStatus() {
-  return handle(await fetch(`${API_BASE_URL}/api/batches-available`));
+  return handle(await fetch(`${API_BASE_URL}/api/batches-available`, { headers: getHeaders() }));
 }
 
 export async function getBatches() {
-  return handle(await fetch(`${API_BASE_URL}/api/batches`));
+  return handle(await fetch(`${API_BASE_URL}/api/batches`, { headers: getHeaders() }));
 }
 
 export async function getBatchPatients(batchNumber) {
-  return handle(await fetch(`${API_BASE_URL}/api/batch/${batchNumber}/patients`));
+  return handle(await fetch(`${API_BASE_URL}/api/batch/${batchNumber}/patients`, { headers: getHeaders() }));
 }
 
 export async function getPatientHistory(patientId) {
-  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/history`));
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/history`, { headers: getHeaders() }));
 }
 
 // True counts across the WHOLE warehouse (not just the capped table view).
@@ -111,9 +175,9 @@ const STATUS_LABELS = {
 function mapPatientRow(r) {
   return {
     ...r,
-    patient_name: r.full_name || `Patient ${r.patient_id}`,
-    contact_number: r.phone_number || null,
-    email: r.email || null,
+    patient_name: r.full_name || '',
+    contact_number: r.phone_number || '',
+    email: r.email || '',
     risk_score: Math.round((r.risk_probability || 0) * 100),
     contact_status: STATUS_LABELS[r.status] || 'Pending Contact',
   };

@@ -5,7 +5,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
-import { getSyntheticIdentity } from '../utils/syntheticIdentity';
 
 // Small helper: renders an action button that requires two clicks to
 // actually fire. First click turns it into a "Confirm?" state for a few
@@ -64,9 +63,7 @@ export default function PatientTable({
     }, 3000);
   };
 
-  const enriched = useMemo(() => {
-    return patients.map((p) => ({ ...p, _identity: getSyntheticIdentity(p.patient_id) }));
-  }, [patients]);
+  const enriched = patients;
 
   const filteredPatients = useMemo(() => {
     return enriched.filter(p => {
@@ -75,9 +72,9 @@ export default function PatientTable({
       const conditions = getConditionTags(p).join(' ').toLowerCase();
       return (
         p.patient_id.toLowerCase().includes(term) ||
-        p._identity.name.toLowerCase().includes(term) ||
-        p._identity.phone.toLowerCase().includes(term) ||
-        p._identity.email.toLowerCase().includes(term) ||
+        (p.patient_name || '').toLowerCase().includes(term) ||
+        (p.contact_number || '').toLowerCase().includes(term) ||
+        (p.email || '').toLowerCase().includes(term) ||
         conditions.includes(term)
       );
     }).sort((a, b) => {
@@ -104,10 +101,10 @@ export default function PatientTable({
   const exportCSV = () => {
     const exportData = filteredPatients.map(p => ({
       "Patient ID": p.patient_id,
-      "Name (synthetic)": p._identity.name,
+      "Name": p.patient_name,
       "Age": p.age,
-      "Phone (synthetic)": p._identity.phone,
-      "Email (synthetic)": p._identity.email,
+      "Phone": p.contact_number,
+      "Email": p.email,
       "Contact Status": p.contact_status,
       "Flagged Conditions": getConditionTags(p).join('; ') || 'None flagged',
       "Risk Score (%)": p.risk_score,
@@ -202,7 +199,9 @@ export default function PatientTable({
                   const tier = getRiskTierMeta(patient.risk_tier);
                   const reasons = getReasons(patient);
                   const conditions = getConditionTags(patient);
-                  const { name, phone, email } = patient._identity;
+                  const name = patient.patient_name || 'Unknown Patient';
+                  const phone = patient.contact_number || '';
+                  const email = patient.email || '';
                   const isContacted = patient.contact_status === 'Contacted';
                   const isSnoozed = patient.contact_status === 'Snoozed';
                   const isClosed = patient.contact_status === 'Closed';
@@ -354,7 +353,13 @@ export default function PatientTable({
                               pendingKey={`${patient.patient_id}:snooze`}
                               activeConfirmKey={armedAction}
                               onArm={armAction}
-                              onCommit={() => { setArmedAction(null); onSnoozePatient(patient.patient_id); }}
+                              onCommit={() => {
+                                setArmedAction(null);
+                                const days = window.prompt("Remind later after how many simulated days?", "5");
+                                if (days && !isNaN(days)) {
+                                  onSnoozePatient(patient.patient_id, parseInt(days, 10));
+                                }
+                              }}
                               className="px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 border bg-slate-100 hover:bg-purple-100 text-slate-700 hover:text-purple-800 border-slate-200 dark:bg-dark-850 dark:hover:bg-purple-950/60 dark:text-slate-300 dark:hover:text-purple-300 dark:border-emerald-500/20"
                               icon={<Clock className="w-3 h-3 text-purple-500" />}
                               label="Snooze"
