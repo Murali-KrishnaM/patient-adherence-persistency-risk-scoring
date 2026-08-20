@@ -124,6 +124,16 @@ CREATE TABLE IF NOT EXISTS ops.patient_status (
 
 CREATE INDEX IF NOT EXISTS idx_status ON ops.patient_status(status);
 
+CREATE TABLE IF NOT EXISTS ops.patient_status_history (
+    id                      SERIAL PRIMARY KEY,
+    patient_id              TEXT NOT NULL REFERENCES ops.patient_status(patient_id),
+    batch_id                INTEGER,
+    old_status              TEXT,
+    new_status              TEXT NOT NULL,
+    notes                   TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Single-row table tracking simulation progress (which batch we're on)
 CREATE TABLE IF NOT EXISTS ops.sim_state (
     id                    SMALLINT PRIMARY KEY DEFAULT 1,

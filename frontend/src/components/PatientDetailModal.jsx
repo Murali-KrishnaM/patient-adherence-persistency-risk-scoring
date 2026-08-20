@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { X, ShieldAlert, Send, CheckCircle2, Activity, Clock, XCircle, Loader2, RotateCcw, Phone, Mail } from 'lucide-react';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
-import { getSyntheticIdentity } from '../utils/syntheticIdentity';
+
+import { updatePatientPii } from '../services/api';
 
 export default function PatientDetailModal({
+  currentUser,
   patient,
   loading,
   actionInFlight,
   onClose,
+  onPatientUpdated,
   onMarkContacted,
   onSnoozePatient,
   onCloseCase,
@@ -21,7 +24,31 @@ export default function PatientDetailModal({
   const tier = getRiskTierMeta(patient.risk_tier);
   const reasons = getReasons(patient);
   const conditions = getConditionTags(patient);
-  const { name, phone, email } = getSyntheticIdentity(patient.patient_id);
+  const name = patient.patient_name || 'Unknown Patient';
+  const phone = patient.contact_number || '';
+  const email = patient.email || '';
+  const preferred_contact = patient.preferred_contact || 'phone';
+
+  const [isEditingPii, setIsEditingPii] = useState(false);
+  const [piiForm, setPiiForm] = useState({ full_name: name, phone_number: phone, email: email, preferred_contact: preferred_contact });
+  const [isSavingPii, setIsSavingPii] = useState(false);
+
+  const handleSavePii = async () => {
+    try {
+      setIsSavingPii(true);
+      await updatePatientPii(patient.patient_id, piiForm);
+      patient.patient_name = piiForm.full_name;
+      patient.contact_number = piiForm.phone_number;
+      patient.email = piiForm.email;
+      patient.preferred_contact = piiForm.preferred_contact;
+      setIsEditingPii(false);
+      if (onPatientUpdated) onPatientUpdated();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setIsSavingPii(false);
+    }
+  };
   const isContacted = patient.contact_status === 'Contacted';
   const isSnoozed = patient.contact_status === 'Snoozed';
   const isClosed = patient.contact_status === 'Closed';
@@ -68,15 +95,65 @@ export default function PatientDetailModal({
               {name.charAt(0)}
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                {name}
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center flex-wrap gap-x-2">
-                <span>ID: {patient.patient_id}</span>
-                <span>• {patient.age ?? 'N/A'} yrs</span>
-                <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
-                <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
-              </p>
+              {isEditingPii ? (
+                <div className="mt-2 space-y-2">
+                  <input
+                    type="text"
+                    value={piiForm.full_name}
+                    onChange={e => setPiiForm({...piiForm, full_name: e.target.value})}
+                    className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                    placeholder="Full Name"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={piiForm.phone_number}
+                      onChange={e => setPiiForm({...piiForm, phone_number: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Phone"
+                    />
+                    <input
+                      type="email"
+                      value={piiForm.email}
+                      onChange={e => setPiiForm({...piiForm, email: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Email"
+                    />
+                  </div>
+                  <select
+                    value={piiForm.preferred_contact}
+                    onChange={e => setPiiForm({...piiForm, preferred_contact: e.target.value})}
+                    className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                  >
+                    <option value="phone">Preferred: Phone</option>
+                    <option value="email">Preferred: Email</option>
+                  </select>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={handleSavePii} disabled={isSavingPii} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold disabled:opacity-50">
+                      {isSavingPii ? 'Saving...' : 'Save'}
+                    </button>
+                    <button onClick={() => setIsEditingPii(false)} className="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-dark-800 dark:hover:bg-dark-700 text-slate-700 dark:text-slate-300 rounded text-xs font-bold">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
+                    <span>{name}</span>
+                    {currentUser?.role === 'admin' && (
+                      <button onClick={() => setIsEditingPii(true)} className="text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 font-semibold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 transition-colors">Edit</button>
+                    )}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center flex-wrap gap-x-2 mt-1">
+                    <span>ID: {patient.patient_id}</span>
+                    <span>• {patient.age ?? 'N/A'} yrs</span>
+                    <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
+                    <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-dark-800 text-[10px]">Prefers: {preferred_contact}</span>
+                  </p>
+                </>
+              )}
             </div>
           </div>
 

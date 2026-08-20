@@ -29,7 +29,6 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Visualizations({ patients }) {
-  const [activeChartTab, setActiveChartTab] = useState('all');
 
   if (!patients || patients.length === 0) return null;
 
@@ -108,30 +107,7 @@ export default function Visualizations({ patients }) {
             </p>
           </div>
         </div>
-
-        <div className="flex items-center space-x-1 bg-slate-100 dark:bg-dark-950 p-1 rounded-xl border border-slate-200 dark:border-emerald-500/20 self-start sm:self-auto">
-          <button
-            onClick={() => setActiveChartTab('all')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-              activeChartTab === 'all'
-                ? 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-dark-950 font-bold shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            All Analytics
-          </button>
-          <button
-            onClick={() => setActiveChartTab('demographics')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-              activeChartTab === 'demographics'
-                ? 'bg-emerald-600 dark:bg-emerald-500 text-white dark:text-dark-950 font-bold shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            Demographics & Conditions
-          </button>
         </div>
-      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

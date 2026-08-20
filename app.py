@@ -150,10 +150,15 @@ def queue():
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3,
             rs.computed_at,
+            pii.full_name,
+            pii.phone_number,
+            pii.email,
+            pii.preferred_contact,
             ps.status
         FROM clinical.risk_scores rs
         JOIN clinical.dim_patient_clinical p ON p.patient_id = rs.patient_id
         JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id
+        LEFT JOIN pii.dim_patient_pii pii ON pii.patient_id = rs.patient_id
         WHERE {where}
         ORDER BY {TIER_RANK_SQL} ASC, rs.risk_probability DESC
         LIMIT %s
@@ -326,8 +331,33 @@ def mark_reset(patient_id):
     return _update_status(patient_id, "needs_contact")
 
 
-@app.route("/api/simulate-next-batch", methods=["POST"])
+@app.route("/api/patient/<patient_id>/pii", methods=["PUT"])
 @require_role("admin")
+def update_patient_pii(patient_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    query(
+        """
+        UPDATE pii.dim_patient_pii
+        SET full_name = %s, phone_number = %s, email = %s, preferred_contact = %s
+        WHERE patient_id = %s
+        """,
+        (
+            data.get("full_name"),
+            data.get("phone_number"),
+            data.get("email"),
+            data.get("preferred_contact"),
+            patient_id
+        ),
+        fetch=False
+    )
+    return jsonify({"success": True})
+
+
+@app.route("/api/simulate-next-batch", methods=["POST"])
+@require_auth
 def simulate_next_batch():
     from db import get_connection
     conn = get_connection()

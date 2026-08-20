@@ -296,19 +296,17 @@ export default function App() {
                   Batch {batchStatus.current_batch} of {batchStatus.total_batches}
                 </span>
               )}
-              {currentUser.role === 'admin' && (
-                <button
-                  onClick={handleNewAnalysis}
-                  disabled={isProcessing || !batchStatus.has_more}
-                  className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 disabled:cursor-not-allowed ${
-                    isLight ? 'text-emerald-700 hover:text-emerald-900' : 'text-emerald-400 hover:text-emerald-300'
-                  }`}
-                  title={batchStatus.has_more ? 'Simulate Next Day' : 'All simulated batches loaded'}
-                >
-                  <RefreshCw className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
-                  <span>{batchStatus.has_more ? 'Simulate Next Day' : 'All Batches Loaded'}</span>
-                </button>
-              )}
+              <button
+                onClick={handleNewAnalysis}
+                disabled={isProcessing || !batchStatus.has_more}
+                className={`text-xs transition-colors flex items-center space-x-1 font-bold disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isLight ? 'text-emerald-700 hover:text-emerald-900' : 'text-emerald-400 hover:text-emerald-300'
+                }`}
+                title={batchStatus.has_more ? 'Simulate Next Day' : 'All simulated batches loaded'}
+              >
+                <RefreshCw className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
+                <span>{batchStatus.has_more ? 'Simulate Next Day' : 'All Batches Loaded'}</span>
+              </button>
 
               <button onClick={handleLogout} className="text-xs ml-4 text-slate-500 hover:text-red-500 transition-colors font-bold">
                 Logout ({currentUser.username})
@@ -358,10 +356,12 @@ export default function App() {
 
       {selectedPatientId && (
         <PatientDetailModal
+          currentUser={currentUser}
           patient={patientDetail}
           loading={detailLoading}
           actionInFlight={actionInFlight}
           onClose={closeDetail}
+          onPatientUpdated={loadQueue}
           onMarkContacted={handleMarkContacted}
           onSnoozePatient={handleSnoozePatient}
           onCloseCase={handleCloseCase}

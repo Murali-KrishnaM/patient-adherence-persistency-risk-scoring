@@ -114,6 +114,14 @@ export async function simulateNextBatch() {
   return handle(await fetch(`${API_BASE_URL}/api/simulate-next-batch`, { method: 'POST', headers: getHeaders() }));
 }
 
+export async function updatePatientPii(patientId, data) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/pii`, {
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  }));
+}
+
 export async function getBatchStatus() {
   return handle(await fetch(`${API_BASE_URL}/api/batches-available`, { headers: getHeaders() }));
 }
@@ -155,9 +163,9 @@ const STATUS_LABELS = {
 function mapPatientRow(r) {
   return {
     ...r,
-    patient_name: r.full_name || `Patient ${r.patient_id}`,
-    contact_number: r.phone_number || null,
-    email: r.email || null,
+    patient_name: r.full_name || '',
+    contact_number: r.phone_number || '',
+    email: r.email || '',
     risk_score: Math.round((r.risk_probability || 0) * 100),
     contact_status: STATUS_LABELS[r.status] || 'Pending Contact',
   };
