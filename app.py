@@ -34,7 +34,11 @@ CORS(
     app,
     resources={r"/api/*": {"origins": [
         "http://localhost:5173",
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:3004"
     ]}},
     supports_credentials=True,
 )
@@ -154,7 +158,8 @@ def queue():
             pii.phone_number,
             pii.email,
             pii.preferred_contact,
-            ps.status
+            ps.status,
+            ps.snoozed_until_batch
         FROM clinical.risk_scores rs
         JOIN clinical.dim_patient_clinical p ON p.patient_id = rs.patient_id
         JOIN ops.patient_status ps ON ps.patient_id = rs.patient_id
@@ -181,7 +186,7 @@ def patient_detail(patient_id):
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3, rs.computed_at,
             pii.full_name, pii.phone_number, pii.email, pii.preferred_contact,
-            ps.status, ps.notes, ps.last_action_at
+            ps.status, ps.notes, ps.last_action_at, ps.snoozed_until_batch
         FROM clinical.dim_patient_clinical p
         LEFT JOIN clinical.risk_scores rs ON rs.patient_id = p.patient_id
         LEFT JOIN pii.dim_patient_pii pii ON pii.patient_id = p.patient_id
@@ -195,7 +200,7 @@ def patient_detail(patient_id):
     return jsonify(row)
 
 
-def _update_status(patient_id, status, notes=None):
+def _update_status(patient_id, status, notes=None, snoozed_until_days=None):
     row = query_one(
         "SELECT patient_id, status FROM ops.patient_status WHERE patient_id = %s", (patient_id,)
     )
@@ -211,15 +216,30 @@ def _update_status(patient_id, status, notes=None):
     )
     batch_id = batch_row["batch_id"] if batch_row else None
 
-    query(
-        """
-        UPDATE ops.patient_status
-        SET status = %s, notes = COALESCE(%s, notes), last_action_at = now(), updated_at = now()
-        WHERE patient_id = %s
-        """,
-        (status, notes, patient_id),
-        fetch=False,
-    )
+    if status == 'snoozed' and snoozed_until_days is not None:
+        sim_row = query_one("SELECT current_batch_number FROM ops.sim_state WHERE id = 1")
+        current_batch = sim_row["current_batch_number"] if sim_row else 0
+        target_batch = current_batch + int(snoozed_until_days)
+        
+        query(
+            """
+            UPDATE ops.patient_status
+            SET status = %s, notes = COALESCE(%s, notes), snoozed_until_batch = %s, last_action_at = now(), updated_at = now()
+            WHERE patient_id = %s
+            """,
+            (status, notes, target_batch, patient_id),
+            fetch=False,
+        )
+    else:
+        query(
+            """
+            UPDATE ops.patient_status
+            SET status = %s, notes = COALESCE(%s, notes), snoozed_until_batch = NULL, last_action_at = now(), updated_at = now()
+            WHERE patient_id = %s
+            """,
+            (status, notes, patient_id),
+            fetch=False,
+        )
 
     query(
         """
@@ -290,14 +310,51 @@ def patient_history(patient_id):
     """Full audit trail for one patient -- every status change, oldest last."""
     rows = query(
         """
-        SELECT old_status, new_status, notes, action_at, batch_id
+        SELECT old_status, new_status, notes, created_at as action_at, batch_id
         FROM ops.patient_status_history
         WHERE patient_id = %s
-        ORDER BY action_at DESC
+        ORDER BY created_at DESC
         """,
         (patient_id,),
     )
     return jsonify(rows)
+
+@app.route("/api/patient/<patient_id>/notes", methods=["POST"])
+@require_auth
+def add_note(patient_id):
+    data = request.get_json(silent=True) or {}
+    notes = data.get("notes")
+    if not notes:
+        return jsonify({"error": "No notes provided"}), 400
+
+    row = query_one("SELECT status FROM ops.patient_status WHERE patient_id = %s", (patient_id,))
+    if not row:
+        return jsonify({"error": "Patient not found"}), 404
+    status = row["status"]
+
+    batch_row = query_one("SELECT batch_id FROM clinical.risk_scores WHERE patient_id = %s", (patient_id,))
+    batch_id = batch_row["batch_id"] if batch_row else None
+
+    query(
+        """
+        UPDATE ops.patient_status
+        SET notes = %s, last_action_at = now(), updated_at = now()
+        WHERE patient_id = %s
+        """,
+        (notes, patient_id),
+        fetch=False,
+    )
+
+    query(
+        """
+        INSERT INTO ops.patient_status_history (patient_id, batch_id, old_status, new_status, notes)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (patient_id, batch_id, status, status, notes),
+        fetch=False,
+    )
+
+    return jsonify({"success": True, "notes": notes})
 
 
 @app.route("/api/patient/<patient_id>/contact", methods=["POST"])
@@ -317,7 +374,9 @@ def mark_closed(patient_id):
 @app.route("/api/patient/<patient_id>/snooze", methods=["POST"])
 @require_auth
 def mark_snoozed(patient_id):
-    return _update_status(patient_id, "snoozed")
+    data = request.get_json(silent=True) or {}
+    days = data.get("days")
+    return _update_status(patient_id, "snoozed", snoozed_until_days=days)
 
 
 @app.route("/api/patient/<patient_id>/reset", methods=["POST"])

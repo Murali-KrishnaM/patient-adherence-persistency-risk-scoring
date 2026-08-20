@@ -184,8 +184,8 @@ export default function App() {
   const handleMarkContacted = (patientId, notes) =>
     runAction((id) => markContacted(id, notes), patientId, 'Patient marked as contacted');
 
-  const handleSnoozePatient = (patientId) =>
-    runAction(markSnoozed, patientId, 'Reminder snoozed for this patient');
+  const handleSnoozePatient = (patientId, days) =>
+    runAction((id) => markSnoozed(id, days), patientId, `Reminder snoozed for ${days} day(s)`);
 
   const handleCloseCase = (patientId, reason) =>
     runAction((id) => markClosed(id, reason), patientId, 'Case closed');

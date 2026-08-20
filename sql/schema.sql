@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS ops.patient_status (
         -- 'needs_contact' | 'contacted' | 'case_closed' | 'snoozed'
     assigned_rep             TEXT,
     notes                     TEXT,
+    snoozed_until_batch       INTEGER,
     last_action_at             TIMESTAMPTZ,
     updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
 );

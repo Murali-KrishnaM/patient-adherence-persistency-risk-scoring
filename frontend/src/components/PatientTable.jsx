@@ -353,7 +353,13 @@ export default function PatientTable({
                               pendingKey={`${patient.patient_id}:snooze`}
                               activeConfirmKey={armedAction}
                               onArm={armAction}
-                              onCommit={() => { setArmedAction(null); onSnoozePatient(patient.patient_id); }}
+                              onCommit={() => {
+                                setArmedAction(null);
+                                const days = window.prompt("Remind later after how many simulated days?", "5");
+                                if (days && !isNaN(days)) {
+                                  onSnoozePatient(patient.patient_id, parseInt(days, 10));
+                                }
+                              }}
                               className="px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 border bg-slate-100 hover:bg-purple-100 text-slate-700 hover:text-purple-800 border-slate-200 dark:bg-dark-850 dark:hover:bg-purple-950/60 dark:text-slate-300 dark:hover:text-purple-300 dark:border-emerald-500/20"
                               icon={<Clock className="w-3 h-3 text-purple-500" />}
                               label="Snooze"

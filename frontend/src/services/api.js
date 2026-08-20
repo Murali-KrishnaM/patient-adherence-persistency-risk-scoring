@@ -102,12 +102,24 @@ export async function markClosed(patientId, reason) {
   }));
 }
 
-export async function markSnoozed(patientId) {
-  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/snooze`, { method: 'POST', headers: getHeaders() }));
+export async function markSnoozed(patientId, days = null) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/snooze`, { 
+    method: 'POST', 
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ days })
+  }));
 }
 
 export async function resetPatientStatus(patientId) {
   return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/reset`, { method: 'POST', headers: getHeaders() }));
+}
+
+export async function addPatientNote(patientId, notes) {
+  return handle(await fetch(`${API_BASE_URL}/api/patient/${patientId}/notes`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ notes }),
+  }));
 }
 
 export async function simulateNextBatch() {

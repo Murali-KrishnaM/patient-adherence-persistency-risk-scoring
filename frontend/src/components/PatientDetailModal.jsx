@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, ShieldAlert, Send, CheckCircle2, Activity, Clock, XCircle, Loader2, RotateCcw, Phone, Mail } from 'lucide-react';
 import { getRiskTierMeta, getReasons, getConditionTags } from '../utils/clinicalLabels';
 
-import { updatePatientPii } from '../services/api';
+import { updatePatientPii, addPatientNote, getPatientHistory } from '../services/api';
 
 export default function PatientDetailModal({
   currentUser,
@@ -18,6 +18,38 @@ export default function PatientDetailModal({
 }) {
   const [reason, setReason] = useState('');
   const [armedAction, setArmedAction] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  React.useEffect(() => {
+    if (patient?.patient_id) {
+      loadHistory();
+    }
+  }, [patient?.patient_id]);
+
+  const loadHistory = async () => {
+    try {
+      const h = await getPatientHistory(patient.patient_id);
+      setHistory(h || []);
+    } catch (e) {
+      console.error("Failed to load history:", e);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!reason.trim()) return;
+    try {
+      setIsSavingNote(true);
+      await addPatientNote(patient.patient_id, reason);
+      setReason('');
+      await loadHistory();
+      if (onPatientUpdated) onPatientUpdated();
+    } catch (e) {
+      alert("Failed to save note: " + e.message);
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
 
   if (!patient) return null;
 
@@ -246,21 +278,49 @@ export default function PatientDetailModal({
             </div>
           </div>
 
-          {/* 4. Notes */}
-          {isActionable && (
-            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-emerald-500/10">
-              <label className="text-xs font-mono uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold">
-                Notes (optional)
-              </label>
-              <textarea
-                rows={2}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Add a note for this contact or closure..."
-                className="w-full rounded-xl p-3 text-xs border outline-none transition-colors bg-slate-50 dark:bg-dark-950 border-slate-300 dark:border-emerald-500/30 text-slate-800 dark:text-white focus:border-emerald-500"
-              />
-            </div>
-          )}
+          {/* 4. Notes & History */}
+          <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-emerald-500/10">
+            <h4 className="text-xs font-mono uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold flex items-center space-x-1.5">
+              <span>Patient History & Notes</span>
+            </h4>
+            
+            {history.length > 0 && (
+              <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
+                {history.map((entry, idx) => (
+                  <div key={idx} className="p-2.5 rounded-lg bg-slate-50 dark:bg-dark-900 border border-slate-200 dark:border-emerald-500/10 flex flex-col space-y-1">
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 dark:text-slate-400">
+                      <span className="font-semibold uppercase">{entry.new_status !== entry.old_status ? `${entry.old_status} ➔ ${entry.new_status}` : entry.new_status}</span>
+                      <span>{new Date(entry.action_at).toLocaleString()}</span>
+                    </div>
+                    {entry.notes && (
+                      <p className="text-xs text-slate-700 dark:text-slate-300 italic whitespace-pre-wrap">{entry.notes}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isActionable && (
+              <div className="space-y-2">
+                <textarea
+                  rows={2}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Add a new note..."
+                  className="w-full rounded-xl p-3 text-xs border outline-none transition-colors bg-slate-50 dark:bg-dark-950 border-slate-300 dark:border-emerald-500/30 text-slate-800 dark:text-white focus:border-emerald-500"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveNote}
+                    disabled={isSavingNote || !reason.trim()}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-dark-800 hover:bg-slate-300 dark:hover:bg-dark-700 text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  >
+                    {isSavingNote ? 'Saving...' : 'Save Note'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
         </div>
 
@@ -270,7 +330,12 @@ export default function PatientDetailModal({
             <div className="flex flex-wrap items-center gap-2">
               <ActionButton
                 actionKey="snooze"
-                onCommit={() => onSnoozePatient(patient.patient_id)}
+                onCommit={() => {
+                  const days = window.prompt("Remind later after how many simulated days?", "5");
+                  if (days && !isNaN(days)) {
+                    onSnoozePatient(patient.patient_id, parseInt(days, 10));
+                  }
+                }}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center space-x-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:bg-dark-850 dark:hover:bg-dark-800 dark:text-purple-300 dark:border-purple-500/30 disabled:opacity-50"
                 icon={<Clock className="w-3.5 h-3.5" />}
                 label="Snooze"
@@ -303,7 +368,10 @@ export default function PatientDetailModal({
                 {isContacted && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                 {isClosed && <XCircle className="w-4 h-4 text-slate-400" />}
                 {isSnoozed && <Clock className="w-4 h-4 text-purple-500" />}
-                <span>This case is marked "{patient.contact_status}"</span>
+                <span>
+                  This case is marked "{patient.contact_status}"
+                  {isSnoozed && patient.snoozed_until_batch ? ` (snoozed until batch #${patient.snoozed_until_batch})` : ''}
+                </span>
               </span>
               <div className="flex items-center space-x-2">
                 {canReactivate && (

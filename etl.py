@@ -128,14 +128,15 @@ def load_batch(batch_number: int) -> dict:
             )
         conn.commit()
 
-        # Auto-unsnooze: reappear as needs_contact once a new day loads.
+        # Auto-unsnooze: reappear as needs_contact if the snooze period has expired.
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE ops.patient_status
-                SET status = 'needs_contact', updated_at = now()
-                WHERE status = 'snoozed'
-                """
+                SET status = 'needs_contact', updated_at = now(), snoozed_until_batch = NULL
+                WHERE status = 'snoozed' AND (snoozed_until_batch IS NULL OR snoozed_until_batch <= %s)
+                """,
+                (batch_number,)
             )
 
         # Archive contacted patients: they've stayed visible with a
