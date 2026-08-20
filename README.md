@@ -68,7 +68,7 @@ Create a `.env` file in the root directory to securely configure your database c
 ```ini
 PG_DATABASE=adherence_warehouse
 PG_USER=postgres
-PG_PASSWORD=1234
+PG_PASSWORD=PASSWORD
 PG_HOST=localhost
 PG_PORT=5432
 ```
