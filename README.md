@@ -1,129 +1,229 @@
-# MedCare Patient Adherence Risk Platform
+# 🏥 MedCare Patient Adherence Risk Platform
 
-This repository contains the complete, production-ready stack for the MedCare Patient Adherence Risk Platform. It features a machine-learning powered backend pipeline, a secure PostgreSQL data warehouse, a Flask API, and a modern, responsive Vite/React frontend dashboard with Role-Based Access Control (RBAC).
+> **A production-ready, ML-powered patient adherence & persistency risk scoring dashboard built for pharma care teams.**
 
-The system is designed to incrementally score patients for non-adherence/persistency risk as new prescription data arrives, enabling care teams to proactively reach out to high-risk patients.
+This repository contains the complete full-stack implementation of the MedCare Patient Adherence Risk Platform — featuring an incremental machine-learning pipeline, a secure multi-schema PostgreSQL data warehouse, a Flask REST API with JWT-based RBAC, and a modern Vite/React dashboard.
+
+The system incrementally scores patients for non-adherence/persistency risk as new prescription data arrives (simulated as "batches"), enabling care teams to proactively reach out to high-risk patients through a structured outreach workflow.
+
+---
 
 ## 🛠️ Full Technology Stack
 
 ### Frontend (UI & Visual Analytics)
-* **React.js:** Core component-based framework for a dynamic Single Page Application (SPA).
-* **Vite:** Next-generation frontend build tool for ultra-fast hot reloading.
-* **Tailwind CSS:** Utility-first framework used to build our custom "Glassmorphism" UI and Dark Mode.
-* **Recharts:** Composable charting library powering the interactive Risk Tier and Condition visual analytics.
-* **Lucide-React:** Crisp, modern SVG iconography.
+| Technology | Purpose |
+|---|---|
+| **React.js** | Core component-based SPA framework |
+| **Vite** | Ultra-fast build tool with hot module replacement |
+| **Tailwind CSS** | Utility-first CSS — powers Glassmorphism UI & Dark/Light Mode |
+| **Recharts** | Composable charting for Risk Tier & Condition analytics |
+| **Lucide-React** | Modern SVG icon library |
 
 ### Backend (API & Security)
-* **Python 3:** Core backend programming language.
-* **Flask:** Lightweight REST API framework routing all frontend requests.
-* **PyJWT:** Handles JSON Web Tokens for our secure Role-Based Access Control (Admin vs Rep).
-* **Werkzeug:** Powers cryptographic password hashing for user authentication.
+| Technology | Purpose |
+|---|---|
+| **Python 3** | Core backend language |
+| **Flask** | Lightweight REST API framework |
+| **Flask-CORS** | Cross-origin resource sharing for frontend↔backend |
+| **PyJWT** | JSON Web Token generation & validation for RBAC |
+| **Werkzeug** | Cryptographic password hashing (pbkdf2:sha256) |
 
 ### Machine Learning & Data Pipeline
-* **XGBoost:** High-performance gradient boosting algorithm (achieving 0.81 Recall).
-* **SHAP (SHapley Additive exPlanations):** Model interpretability library providing patient-specific risk explanations.
-* **Scikit-Learn:** Used for data standard scaling and model evaluation metrics.
-* **Pandas:** Powers the ETL engine, processing and transforming raw CMS batch data.
+| Technology | Purpose |
+|---|---|
+| **XGBoost** | Gradient boosting classifier (0.81 Recall on hold-out set) |
+| **SHAP** | SHapley Additive exPlanations for per-patient risk interpretability |
+| **Scikit-Learn** | Standard scaling, evaluation metrics |
+| **Pandas** | ETL engine — processes and transforms raw CMS batch CSV data |
 
 ### Database & Storage
-* **PostgreSQL:** Relational Data Warehouse utilizing strict schema segregation.
-* **Psycopg2:** High-performance database adapter bridging our Flask API and Postgres.
-* **Data Source:** CMS 2008-2010 Data Entrepreneurs’ Synthetic Public Use File (DE1.0).
+| Technology | Purpose |
+|---|---|
+| **PostgreSQL** | Multi-schema relational data warehouse |
+| **Psycopg2** | High-performance Python↔Postgres adapter |
+| **CMS DE1.0 Dataset** | 2008–2010 CMS Synthetic Public Use File (real-world structure) |
+
+---
 
 ## 🏗️ Architecture Overview
 
-1. **Frontend**: A dynamic, premium dashboard featuring dark/light modes, data visualizations, and an organized queue for care coordinators.
-2. **Backend API**: Serves the frontend, manages JWT authentication, and securely queries the data warehouse.
-3. **Data Warehouse (PostgreSQL)**: Strictly segregated schemas for security:
-   - `clinical`: Medical history, prescription data, and ML risk scores.
-   - `pii`: Patient Personally Identifiable Information (names, contacts). Isolated from the ML models.
-   - `ops`: Operational state (batch tracking, application metrics).
-   - `auth`: Role-Based Access Control (RBAC) tables, user credentials, and roles.
-4. **Machine Learning Pipeline**: Incrementally scores patients using an XGBoost model and SHAP values for explainability.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React/Vite)                   │
+│   Dashboard · Patient Queue · Risk Charts · Detail Modal        │
+└────────────────────────┬────────────────────────────────────────┘
+                         │ REST API (JSON/JWT)
+┌────────────────────────▼────────────────────────────────────────┐
+│                      BACKEND (Flask API)                        │
+│   Auth · RBAC · Patient Actions · Batch Simulation Trigger      │
+└───────┬────────────────────────────────────────┬────────────────┘
+        │                                        │
+┌───────▼──────────┐                   ┌─────────▼──────────────┐
+│  PostgreSQL DB   │                   │  ML Pipeline (ETL)     │
+│  ┌─────────────┐ │                   │  etl.py + model_utils  │
+│  │  clinical   │ │◄──────────────────│  XGBoost + SHAP        │
+│  │  pii        │ │                   └────────────────────────┘
+│  │  ops        │ │
+│  │  auth       │ │
+│  └─────────────┘ │
+└──────────────────┘
+```
 
-## 🔒 Security & RBAC
+### Schema Segregation (Security by Design)
+| Schema | Contents | Accessed By |
+|---|---|---|
+| `clinical` | Patient medical history, prescriptions, ML risk scores | ML pipeline, API (anon) |
+| `pii` | Names, phone, email, contact preference | API only (on detail view) |
+| `ops` | Batch tracking, patient action status, snooze state, audit history | API, ETL |
+| `auth` | Users, roles, password hashes | Auth endpoints only |
 
-The platform implements strict Role-Based Access Control at the API level:
+---
 
-- **Admin (`admin`)**: Full access. Can view the queue, patient details, edit sensitive PII, and crucially, has the authority to trigger the simulation of new data batches.
-- **Care Coordinator (`rep`)**: Restricted access. Can view the queue and process patient outreach (mark contacted/closed), but cannot ingest new data or edit patient PII.
+## 🔒 Security & Role-Based Access Control (RBAC)
 
-API endpoints are secured using JSON Web Tokens (JWT).
+JWT-secured endpoints with strict role enforcement:
+
+| Role | Permissions |
+|---|---|
+| **Admin** | Full access: view queue, patient details, edit PII, trigger batch simulation, view batch history |
+| **Care Rep (`rep`)** | Restricted: view queue, mark contacted/closed, add notes, snooze patients — **cannot** simulate batches or edit PII |
+
+---
+
+## ✨ Key Features
+
+### 🤖 ML Risk Scoring (Incremental)
+- XGBoost model trained on CMS claims data
+- Patients scored in real-time as each simulated batch loads
+- SHAP-derived top-3 risk factors shown per patient for explainability
+
+### 📋 Patient Outreach Queue
+- Sorted by Risk Tier (High → Medium → Low) then by raw probability
+- Filterable by tier and text search
+- Actions: **Mark Contacted**, **Close Case**, **Snooze**, **Reactivate**
+
+### 💤 Simulation-Aware Snooze
+- When clicking **Snooze**, a prompt asks: *"Remind later after how many simulated days?"*
+- The system stores the **target batch number** (`current_batch + X`) in the database
+- When "Simulate Next Day" advances past that batch number, the patient **automatically reappears** in the queue
+- Snoozed patient modal shows: `"Snoozed until batch #N"`
+
+### 📝 Persistent Patient Notes
+- Reps and Admins can add freeform notes to any patient
+- Notes are **permanently saved** to the database tied to `patient_id`
+- Full history of all actions (status changes + notes) shown in patient modal as a timeline audit trail
+
+### 🧪 Batch Simulation ("Simulate Next Day")
+- Admin-only control that loads the next pre-built CSV batch
+- Each click = 1 simulated day of new prescription claims
+- Triggers the full ETL pipeline: ingest → feature compute → ML score → upsert → unsnooze check
+
+### 📊 Analytics Visualizations
+- Real-time Risk Tier distribution chart
+- Chronic condition breakdown chart
+- Stats bar (High / Medium / Low counts, current simulation day)
+
+### 🌗 Dark / Light Mode
+- Full theme toggle with smooth transitions
+- Premium glassmorphism design
+
+---
 
 ## 🚀 Local Development Setup
 
-The system is designed to run locally. Ensure you have PostgreSQL, Python 3.9+, and Node.js installed.
+### Prerequisites
+- PostgreSQL 14+
+- Python 3.9+
+- Node.js 18+
 
 ### 1. Database & Environment Setup
 
 ```bash
-# 1. Create an empty Postgres database
+# Create the database
 createdb adherence_warehouse
 
-# 2. Install Python dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the root directory to securely configure your database connection:
+Create a `.env` file in the project root:
 ```ini
 PG_DATABASE=adherence_warehouse
 PG_USER=postgres
-PG_PASSWORD=PASSWORD
+PG_PASSWORD=YOUR_PASSWORD
 PG_HOST=localhost
 PG_PORT=5432
+JWT_SECRET=your-secret-key-here
 ```
 
-### 2. Data Preparation
+### 2. Data Preparation & Schema Initialization
+
 ```bash
-# 1. Prepare data batches
+# Prepare batch CSVs from raw CMS data
 python scripts/prepare_batches.py \
     --beneficiary-csv /path/to/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv \
     --pde-csv /path/to/DE1_0_2008_to_2010_Prescription_Drug_Events_Sample_1.csv \
     --pool-size 480 \
     --batch-size 16
 
-# 2. Initialize the database schema and seed demo users
-# This creates the clinical, pii, ops, and auth schemas, and seeds the 'admin' and 'rep' accounts.
+# Initialize schema, seed demo users, load first batch
 python scripts/init_db.py
 ```
 
-### 3. Running the Application (Windows PowerShell)
+### 3. Run the Application (Windows PowerShell)
 
-We have provided a convenient launch script. Open PowerShell and run:
 ```powershell
 .\start-dev.ps1
 ```
-This script will automatically start the Flask backend in a new window and the Vite frontend in the current window.
-The application will be available at `http://localhost:3000`.
 
-## 🎬 Demo Script (Suggested Flow)
+This starts:
+- **Flask backend** → `http://localhost:5000`
+- **Vite frontend** → `http://localhost:3000` (or next available port)
 
-1. **Login as Admin**: Open the dashboard and log in with `admin` / `password`.
-2. **Initial State**: The queue is empty, and stats show 0 patients scored (as intended).
-3. **Simulate Data**: Click **Simulate Next Day**. A batch of ~16 new patients will be ingested, scored by the ML model, and will appear in the queue, sorted High → Low risk.
-4. **Explainability & History**: Open a High Risk patient to view SHAP-derived "why" factors alongside their contact card. View the "History" tab to see audit logs of all actions taken on this patient.
-5. **PII Editing (Admin Only)**: As an Admin, use the "Edit Patient Details" button to update their contact info. This writes securely to the `pii` schema.
-6. **Role Switch**: Log out, and log back in as the Care Coordinator (`rep` / `password`). 
-7. **Outreach Workflow**: Notice the "Simulate Next Day" button is gone, and you cannot edit PII. Click **Mark Contacted** on a patient. They immediately drop off the queue.
-8. **Incrementality**: Log back in as `admin` and click **Simulate Next Day** again. A fresh batch appears. Previously contacted patients do not resurface.
+> **Note:** If port 3000 is busy, Vite auto-selects the next free port (3001, 3002, etc.). The Flask CORS config already handles this.
+
+---
+
+## 🎬 Demo Script (Suggested Presentation Flow)
+
+1. **Login as Admin** → `admin` / `password`
+2. **Simulate Day 1** → Click **Simulate Next Day** → Watch 16 patients appear, sorted by risk
+3. **Explore a High Risk Patient** → Open modal → See SHAP risk factors + contact info
+4. **Add a Note** → Type a note in "Patient History & Notes" → Click **Save Note** → Confirm it persists in the history timeline
+5. **Snooze a Patient** → Click **Snooze** → Enter `3` days → Confirm "Snoozed until batch #N" message
+6. **Simulate Day 2 & 3** → Click Simulate twice → Watch the snoozed patient stay hidden
+7. **Simulate Day 4** → Click again → Watch the snoozed patient **automatically reappear** ✨
+8. **Switch to Rep** → Log out → Login as `rep` / `password`
+9. **Show RBAC** → "Simulate Next Day" is gone · PII is read-only · Rep can contact/snooze/add notes
+10. **Mark Contacted** → Patient drops off the queue immediately
+
+---
 
 ## 🔌 API Reference
 
-| Method | Path | Auth Required | Role | Purpose |
-|---|---|---|---|---|
-| POST | `/api/login` | No | - | Authenticate and receive JWT |
-| GET | `/api/me` | Yes | Any | Get current user profile |
-| GET | `/api/stats` | Yes | Any | Tier × status counts, current batch number |
-| GET | `/api/queue?tier=High` | Yes | Any | Ranked outreach queue (no PII) |
-| GET | `/api/patient/<id>` | Yes | Any | Full detail incl. PII + SHAP top factors |
-| POST | `/api/patient/<id>/contact`| Yes | Any | Mark contacted, removes from queue |
-| POST | `/api/patient/<id>/close` | Yes | Any | Mark case closed (resolved elsewhere) |
-| POST | `/api/patient/<id>/snooze`| Yes | Any | Snooze patient, auto-resets next batch |
-| PUT  | `/api/patient/<id>/pii`   | Yes | **Admin** | Edit patient contact info securely |
-| POST | `/api/simulate-next-batch`| Yes | Any | Ingest next batch, score, update queue |
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| POST | `/api/login` | Public | Authenticate, receive JWT |
+| GET | `/api/me` | Any | Current user profile |
+| GET | `/api/stats` | Any | Tier × status counts, current batch |
+| GET | `/api/queue` | Any | Ranked outreach queue (no PII) |
+| GET | `/api/patient/<id>` | Any | Full detail: PII + SHAP factors + snooze status |
+| GET | `/api/patient/<id>/history` | Any | Full audit trail of actions & notes |
+| POST | `/api/patient/<id>/contact` | Any | Mark contacted, removes from queue |
+| POST | `/api/patient/<id>/close` | Any | Mark case closed |
+| POST | `/api/patient/<id>/snooze` | Any | Snooze with `{"days": N}` — batch-aware |
+| POST | `/api/patient/<id>/notes` | Any | Add persistent note |
+| POST | `/api/patient/<id>/reset` | Any | Reactivate snoozed/closed patient |
+| PUT | `/api/patient/<id>/pii` | **Admin** | Edit patient contact info |
+| POST | `/api/simulate-next-batch` | **Admin** | Load next CSV batch, score patients |
+| GET | `/api/batches` | **Admin** | Batch history with action breakdown |
 
-## 📐 Design Notes for Q&A
+---
 
-- **PII Isolation:** `pii.dim_patient_pii` is a separate schema. The ML scoring path (`etl.py` → `model_utils.py`) only ever queries `clinical.*` and `ops.*` — never `pii.*`. Only `GET /api/patient/<id>` joins across schemas, strictly at the moment a representative views the contact card.
-- **Risk Tiers:** The trained model outputs `predict_proba` (continuous 0–1). Tiers are threshold bands over that probability, while ranking within a tier utilizes the raw probability. The most urgent patient is always first.
-- **Simulation Strategy:** Instead of true real-time streaming, the demo utilizes pre-built batches of unseen patients. This simulates a real-world nightly or weekly batch ingestion process (common in healthcare like CMS claims processing) while keeping the demo perfectly paced.
+## 📐 Design Notes
+
+- **PII Isolation:** The ML scoring path (`etl.py` → `model_utils.py`) only queries `clinical.*` and `ops.*` — **never `pii.*`**. PII is joined only at the API layer when a rep explicitly opens a patient's contact card.
+- **Risk Tiers:** XGBoost outputs continuous `predict_proba` (0–1). Tiers are threshold bands over that score; ranking within a tier uses raw probability so the most urgent patient is always first.
+- **Simulation Strategy:** Pre-built CSV batches simulate nightly/weekly batch ingestion (standard in healthcare claims processing like CMS). Each batch click advances the "simulation day" counter.
+- **Snooze Logic:** Snooze duration is stored as a target **batch number** (`snoozed_until_batch`), not a real-world timestamp. This ensures the snooze logic is perfectly synchronized with the simulation clock.
+- **Audit Trail:** Every patient action (status change, note added) is written to `ops.patient_status_history` with a timestamp, providing a complete, tamper-evident activity log.
