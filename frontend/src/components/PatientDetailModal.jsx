@@ -62,7 +62,14 @@ export default function PatientDetailModal({
   const preferred_contact = patient.preferred_contact || 'phone';
 
   const [isEditingPii, setIsEditingPii] = useState(false);
-  const [piiForm, setPiiForm] = useState({ full_name: name, phone_number: phone, email: email, preferred_contact: preferred_contact });
+  const [piiForm, setPiiForm] = useState({ 
+    full_name: name, 
+    phone_number: phone, 
+    email: email, 
+    alt_phone: patient.alt_phone || '',
+    alt_email: patient.alt_email || '',
+    preferred_contact: preferred_contact 
+  });
   const [isSavingPii, setIsSavingPii] = useState(false);
 
   const handleSavePii = async () => {
@@ -72,6 +79,8 @@ export default function PatientDetailModal({
       patient.patient_name = piiForm.full_name;
       patient.contact_number = piiForm.phone_number;
       patient.email = piiForm.email;
+      patient.alt_phone = piiForm.alt_phone;
+      patient.alt_email = piiForm.alt_email;
       patient.preferred_contact = piiForm.preferred_contact;
       setIsEditingPii(false);
       if (onPatientUpdated) onPatientUpdated();
@@ -142,14 +151,30 @@ export default function PatientDetailModal({
                       value={piiForm.phone_number}
                       onChange={e => setPiiForm({...piiForm, phone_number: e.target.value})}
                       className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
-                      placeholder="Phone"
+                      placeholder="Primary Phone"
                     />
                     <input
                       type="email"
                       value={piiForm.email}
                       onChange={e => setPiiForm({...piiForm, email: e.target.value})}
                       className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
-                      placeholder="Email"
+                      placeholder="Primary Email"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={piiForm.alt_phone}
+                      onChange={e => setPiiForm({...piiForm, alt_phone: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Alt Phone (optional)"
+                    />
+                    <input
+                      type="email"
+                      value={piiForm.alt_email}
+                      onChange={e => setPiiForm({...piiForm, alt_email: e.target.value})}
+                      className="w-full text-sm p-1.5 rounded bg-slate-100 dark:bg-dark-900 border border-slate-300 dark:border-emerald-500/30 text-slate-900 dark:text-white outline-none focus:border-emerald-500"
+                      placeholder="Alt Email (optional)"
                     />
                   </div>
                   <select
@@ -181,7 +206,13 @@ export default function PatientDetailModal({
                     <span>ID: {patient.patient_id}</span>
                     <span>• {patient.age ?? 'N/A'} yrs</span>
                     <span className="flex items-center space-x-1"><Phone className="w-3 h-3" /><span>{phone}</span></span>
+                    {patient.alt_phone && (
+                      <span className="flex items-center space-x-1 text-slate-400 dark:text-slate-500"><Phone className="w-3 h-3" /><span>{patient.alt_phone} (alt)</span></span>
+                    )}
                     <span className="flex items-center space-x-1"><Mail className="w-3 h-3" /><span>{email}</span></span>
+                    {patient.alt_email && (
+                      <span className="flex items-center space-x-1 text-slate-400 dark:text-slate-500"><Mail className="w-3 h-3" /><span>{patient.alt_email} (alt)</span></span>
+                    )}
                     <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-dark-800 text-[10px]">Prefers: {preferred_contact}</span>
                   </p>
                 </>

@@ -157,6 +157,8 @@ def queue():
             pii.full_name,
             pii.phone_number,
             pii.email,
+            pii.alt_phone,
+            pii.alt_email,
             pii.preferred_contact,
             ps.status,
             ps.snoozed_until_batch
@@ -185,7 +187,7 @@ def patient_detail(patient_id):
             p.sp_ra_oa, p.sp_strketia,
             rs.risk_probability, rs.risk_tier,
             rs.top_factor_1, rs.top_factor_2, rs.top_factor_3, rs.computed_at,
-            pii.full_name, pii.phone_number, pii.email, pii.preferred_contact,
+            pii.full_name, pii.phone_number, pii.email, pii.alt_phone, pii.alt_email, pii.preferred_contact,
             ps.status, ps.notes, ps.last_action_at, ps.snoozed_until_batch
         FROM clinical.dim_patient_clinical p
         LEFT JOIN clinical.risk_scores rs ON rs.patient_id = p.patient_id
@@ -400,13 +402,16 @@ def update_patient_pii(patient_id):
     query(
         """
         UPDATE pii.dim_patient_pii
-        SET full_name = %s, phone_number = %s, email = %s, preferred_contact = %s
+        SET full_name = %s, phone_number = %s, email = %s,
+            alt_phone = %s, alt_email = %s, preferred_contact = %s
         WHERE patient_id = %s
         """,
         (
             data.get("full_name"),
             data.get("phone_number"),
             data.get("email"),
+            data.get("alt_phone") or None,
+            data.get("alt_email") or None,
             data.get("preferred_contact"),
             patient_id
         ),
