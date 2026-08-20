@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS pii.dim_patient_pii (
     full_name             TEXT NOT NULL,
     phone_number           TEXT NOT NULL,
     email                   TEXT NOT NULL,
+    alt_phone               TEXT,
+    alt_email               TEXT,
     preferred_contact       TEXT NOT NULL DEFAULT 'phone',  -- 'phone' | 'email'
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
